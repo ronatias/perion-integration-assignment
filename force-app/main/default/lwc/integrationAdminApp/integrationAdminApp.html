@@ -1,0 +1,277 @@
+<!-- integrationAdminApp.html
+     Purpose:
+      - Provide a clean, tabbed "Integration Admin Console" UI.
+      - Eye-catching: button group as tabs, SLDS tables, clear sections.
+      - Tabs:
+          * Systems: manage Integration_System__mdt
+          * Object Mappings: manage Integration_Object_Config__mdt
+          * Field Mappings: manage Integration_Field_Map__mdt
+-->
+
+<template>
+    <lightning-card title="Integration Admin Console" icon-name="utility:connected_apps">
+        <!-- Tab Selector -->
+        <div class="slds-p-horizontal_small slds-p-vertical_x-small slds-border_bottom">
+            <lightning-button-group>
+                <lightning-button
+                    label="Systems"
+                    value="systems"
+                    onclick={handleTabChange}
+                    variant={showSystemsTab ? 'brand' : 'neutral'}>
+                </lightning-button>
+                <lightning-button
+                    label="Object Mappings"
+                    value="mappings"
+                    onclick={handleTabChange}
+                    variant={showMappingsTab ? 'brand' : 'neutral'}>
+                </lightning-button>
+                <lightning-button
+                    label="Field Mappings"
+                    value="fields"
+                    onclick={handleTabChange}
+                    variant={showFieldsTab ? 'brand' : 'neutral'}>
+                </lightning-button>
+            </lightning-button-group>
+        </div>
+
+        <!-- Error banner -->
+        <template if:true={errorMessage}>
+            <div class="slds-text-color_error slds-p-around_small">
+                {errorMessage}
+            </div>
+        </template>
+
+        <!-- Global spinner -->
+        <template if:true={isLoading}>
+            <lightning-spinner alternative-text="Loading" size="small"></lightning-spinner>
+        </template>
+
+        <!-- ===================== SYSTEMS TAB ===================== -->
+        <template if:true={showSystemsTab}>
+            <div class="slds-p-around_small">
+                <h2 class="slds-text-heading_small slds-m-bottom_small">
+                    External Systems
+                </h2>
+                <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped">
+                    <thead>
+                        <tr class="slds-line-height_reset">
+                            <th scope="col">System</th>
+                            <th scope="col">Active</th>
+                            <th scope="col">Max Retries</th>
+                            <th scope="col">Handler Class</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template for:each={systems} for:item="sys" for:index="index">
+                            <tr key={sys.developerName}>
+                                <td>{sys.label}</td>
+                                <td>
+                                    <lightning-input type="toggle"
+                                                     message-toggle-active="On"
+                                                     message-toggle-inactive="Off"
+                                                     data-index={index}
+                                                     data-field="isActive"
+                                                     checked={sys.isActive}
+                                                     onchange={handleSystemChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-input type="number"
+                                                     variant="label-hidden"
+                                                     data-index={index}
+                                                     data-field="maxRetries"
+                                                     value={sys.maxRetries}
+                                                     onchange={handleSystemChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-pill label={sys.handlerClass} variant="neutral"></lightning-pill>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <div class="slds-m-top_small slds-text-align_right">
+                    <lightning-button variant="brand"
+                                      label="Save Systems"
+                                      onclick={handleSaveSystems}
+                                      icon-name="utility:save">
+                    </lightning-button>
+                </div>
+            </div>
+        </template>
+
+        <!-- ===================== OBJECT MAPPINGS TAB ===================== -->
+        <!-- CHANGED: sObjectName + systemApiName now use comboboxes (sObjectOptions, systemOptions) -->
+        <template if:true={showMappingsTab}>
+            <div class="slds-p-around_small">
+                <div class="slds-grid slds-wrap slds-m-bottom_small">
+                    <div class="slds-col slds-size_1-of-2">
+                        <h2 class="slds-text-heading_small">Object → System Mappings</h2>
+                        <p class="slds-text-color_weak">
+                            Control which objects and events send data to which systems.
+                        </p>
+                    </div>
+                    <div class="slds-col slds-size_1-of-2 slds-text-align_right">
+                        <lightning-button label="Add Mapping"
+                                          icon-name="utility:add"
+                                          variant="neutral"
+                                          onclick={addObjectConfig}>
+                        </lightning-button>
+                    </div>
+                </div>
+
+                <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped">
+                    <thead>
+                        <tr class="slds-line-height_reset">
+                            <th scope="col">SObject</th>
+                            <th scope="col">System</th>
+                            <th scope="col">Trigger Reason</th>
+                            <th scope="col">Active</th>
+                            <th scope="col">Fields</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template for:each={objectConfigs} for:item="cfg" for:index="index">
+                            <tr key={index}>
+                                <td>
+                                    <!-- SObject combobox (driven by Integration_Enabled_Object__mdt) -->
+                                    <lightning-combobox
+                                        data-index={index}
+                                        data-field="sObjectName"
+                                        value={cfg.sObjectName}
+                                        options={sObjectOptions}
+                                        onchange={handleObjectConfigChange}>
+                                    </lightning-combobox>
+                                </td>
+                                <td>
+                                    <!-- System combobox (driven by Integration_System__mdt) -->
+                                    <lightning-combobox
+                                        data-index={index}
+                                        data-field="systemApiName"
+                                        value={cfg.systemApiName}
+                                        options={systemOptions}
+                                        onchange={handleObjectConfigChange}>
+                                    </lightning-combobox>
+                                </td>
+                                <td>
+                                    <lightning-input type="text"
+                                                     variant="label-hidden"
+                                                     data-index={index}
+                                                     data-field="triggerReason"
+                                                     value={cfg.triggerReason}
+                                                     onchange={handleObjectConfigChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-input type="checkbox"
+                                                     data-index={index}
+                                                     data-field="isActive"
+                                                     checked={cfg.isActive}
+                                                     onchange={handleObjectConfigChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-button label="Edit Fields"
+                                                      icon-name="utility:edit"
+                                                      data-index={index}
+                                                      onclick={handleEditFields}>
+                                    </lightning-button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <div class="slds-m-top_small slds-text-align_right">
+                    <lightning-button variant="brand"
+                                      label="Save Mappings"
+                                      onclick={handleSaveObjectConfigs}
+                                      icon-name="utility:save">
+                    </lightning-button>
+                </div>
+            </div>
+        </template>
+
+        <!-- ===================== FIELD MAPPINGS TAB ===================== -->
+        <template if:true={showFieldsTab}>
+            <div class="slds-p-around_small">
+                <h2 class="slds-text-heading_small">
+                    Field Mappings
+                </h2>
+                <p class="slds-text-color_weak slds-m-bottom_small">
+                    Define which fields from {selectedSObjectName} are sent to {selectedSystemApiName} and how they are named.
+                </p>
+
+                <div class="slds-m-bottom_small slds-text-align_right">
+                    <lightning-button label="Add Field Mapping"
+                                      icon-name="utility:add"
+                                      variant="neutral"
+                                      onclick={addFieldMapping}>
+                    </lightning-button>
+                </div>
+
+                <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped">
+                    <thead>
+                        <tr class="slds-line-height_reset">
+                            <th scope="col">Source Field</th>
+                            <th scope="col">Target Name</th>
+                            <th scope="col">Required</th>
+                            <th scope="col">Data Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template for:each={fieldMappings} for:item="fm" for:index="index">
+                            <tr key={index}>
+                                <td>
+                                    <lightning-combobox
+                                        data-index={index}
+                                        data-field="sourceFieldAPI"
+                                        value={fm.sourceFieldAPI}
+                                        options={availableFields}
+                                        onchange={handleFieldMappingChange}>
+                                    </lightning-combobox>
+                                </td>
+                                <td>
+                                    <lightning-input type="text"
+                                                     variant="label-hidden"
+                                                     data-index={index}
+                                                     data-field="targetFieldName"
+                                                     value={fm.targetFieldName}
+                                                     onchange={handleFieldMappingChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-input type="checkbox"
+                                                     data-index={index}
+                                                     data-field="isRequired"
+                                                     checked={fm.isRequired}
+                                                     onchange={handleFieldMappingChange}>
+                                    </lightning-input>
+                                </td>
+                                <td>
+                                    <lightning-input type="text"
+                                                     variant="label-hidden"
+                                                     data-index={index}
+                                                     data-field="dataType"
+                                                     value={fm.dataType}
+                                                     onchange={handleFieldMappingChange}>
+                                    </lightning-input>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+
+                <div class="slds-m-top_small slds-text-align_right">
+                    <lightning-button variant="brand"
+                                      label="Save Field Mappings"
+                                      icon-name="utility:save"
+                                      onclick={handleSaveFieldMappings}>
+                    </lightning-button>
+                </div>
+            </div>
+        </template>
+    </lightning-card>
+</template>
