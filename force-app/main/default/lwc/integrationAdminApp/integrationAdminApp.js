@@ -10,7 +10,7 @@
 //  - Uses simple DTOs from IntegrationAdminDTOs (no Id).
 //  - Upserts in Apex are keyed by:
 //      * Systems        → developerName
-//      * Object Rules   → (sObjectName, systemApiName, triggerReason)
+//      * Object Rules   → (sObjectName, systemApiName)
 //      * Field Mappings → (sObjectName, systemApiName, sourceFieldAPI)
 //  - LWC keeps local arrays and sends them to Apex on explicit Save.
 
@@ -120,14 +120,20 @@ export default class IntegrationAdminApp extends LightningElement {
         const field = event.target.dataset.field;
         if (idx === undefined || field === undefined) return;
 
-        const value = event.target.type === 'checkbox'
-            ? event.target.checked
-            : event.target.value;
+        // IMPORTANT:
+        //  - type="checkbox"  → use event.target.checked
+        //  - type="toggle"    → ALSO use event.target.checked
+        //  - others (number/text) → use event.target.value
+        const type = event.target.type;
+        const isBooleanInput = type === 'checkbox' || type === 'toggle';
+
+        const rawValue = isBooleanInput ? event.target.checked : event.target.value;
 
         const draft = [...this.systems];
-        draft[idx][field] = (field === 'maxRetries' && value !== '' && value !== null)
-            ? Number(value)
-            : value;
+        draft[idx][field] =
+            field === 'maxRetries' && rawValue !== '' && rawValue !== null
+                ? Number(rawValue)
+                : rawValue;
         this.systems = draft;
     }
 
@@ -183,13 +189,11 @@ export default class IntegrationAdminApp extends LightningElement {
     async handleSaveObjectConfigs() {
         this.isLoading = false; // make sure spinner is off until validation passes
         this.errorMessage = null;
-    
-        // NEW: Enforce uniqueness of (sObjectName + systemApiName) on the client side.
-        // This keeps the UX clean and prevents the admin from saving ambiguous rules.
+
+        // Enforce uniqueness of (sObjectName + systemApiName) on the client side.
         const seenPairs = new Set();
         for (const cfg of this.objectConfigs) {
             if (!cfg.sObjectName || !cfg.systemApiName) {
-                // Ignore incomplete rows – they won't be saved anyway in Apex.
                 continue;
             }
             const key = `${cfg.sObjectName}::${cfg.systemApiName}`;
@@ -197,11 +201,11 @@ export default class IntegrationAdminApp extends LightningElement {
                 this.errorMessage =
                     'Duplicate Object + System mapping detected. ' +
                     'Only one rule per Object + System combination is allowed.';
-                return; // Abort save – backend will not be called.
+                return;
             }
             seenPairs.add(key);
         }
-    
+
         this.isLoading = true;
         try {
             // Strip rowId before sending to Apex
@@ -219,7 +223,6 @@ export default class IntegrationAdminApp extends LightningElement {
             this.isLoading = false;
         }
     }
-    
 
     // ===================== FIELD MAPPINGS TAB =====================
 
@@ -297,15 +300,13 @@ export default class IntegrationAdminApp extends LightningElement {
 
     async handleSaveFieldMappings() {
         if (this.isAddFieldDisabled) return;
-    
+
         this.errorMessage = null;
-    
-        // NEW: Enforce uniqueness of SourceFieldAPI per Object + System on client side.
-        // For a given Object + System, the same source field should not be mapped twice.
+
+        // Enforce uniqueness of SourceFieldAPI per Object + System on client side.
         const seenFields = new Set();
         for (const fm of this.fieldMappings) {
             if (!fm.sourceFieldAPI) {
-                // Ignore empty lines – they won't be persisted meaningfully anyway.
                 continue;
             }
             const key = fm.sourceFieldAPI;
@@ -313,11 +314,11 @@ export default class IntegrationAdminApp extends LightningElement {
                 this.errorMessage =
                     'Duplicate field mapping detected. ' +
                     'The same source field cannot be mapped more than once for the selected Object + System.';
-                return; // Abort save – backend will not be called.
+                return;
             }
             seenFields.add(key);
         }
-    
+
         this.isLoading = true;
         try {
             const payload = this.fieldMappings.map(fm => ({
@@ -340,5 +341,4 @@ export default class IntegrationAdminApp extends LightningElement {
             this.isLoading = false;
         }
     }
-    
 }

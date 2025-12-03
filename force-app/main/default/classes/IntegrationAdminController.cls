@@ -56,8 +56,6 @@ public with sharing class IntegrationAdminController {
             IntegrationAdminDTOs.SystemConfigDTO dto =
                 new IntegrationAdminDTOs.SystemConfigDTO();
             dto.developerName = sys.DeveloperName__c;
-            // NOTE: If you want the dropdown label to show the developer name instead of auto-number,
-            //       you can set dto.label = sys.DeveloperName__c;
             dto.label         = sys.Name;
             dto.isActive      = sys.IsActive__c;
             dto.handlerClass  = sys.HandlerClass__c;
@@ -71,14 +69,24 @@ public with sharing class IntegrationAdminController {
 
     @AuraEnabled
     public static void saveSystems(List<Object> systems) {
+        System.debug('===== RAW systems FROM LWC ===== ' + JSON.serialize(systems));
+
         if (systems == null || systems.isEmpty()) {
+            System.debug('===== systems NULL/EMPTY =====');
             return;
         }
-    
+
+        // ============================================================
+        // UPDATE: normalize payload to List<Map<String,Object>>
+        // ============================================================
+        List<Object> normalized =
+            (List<Object>) JSON.deserializeUntyped(JSON.serialize(systems));
+        System.debug('saveSystems – NORMALIZED payload: ' + normalized);
+
         // Load existing systems keyed by DeveloperName__c
         Map<String, Integration_System_Config__c> byDevName =
             new Map<String, Integration_System_Config__c>();
-    
+
         for (Integration_System_Config__c sys : [
             SELECT Id, DeveloperName__c, IsActive__c, MaxRetries__c, HandlerClass__c
             FROM Integration_System_Config__c
@@ -87,89 +95,123 @@ public with sharing class IntegrationAdminController {
                 byDevName.put(sys.DeveloperName__c, sys);
             }
         }
-    
+        System.debug('saveSystems – existing keys: ' + byDevName.keySet());
+
         List<Integration_System_Config__c> toInsert = new List<Integration_System_Config__c>();
         List<Integration_System_Config__c> toUpdate = new List<Integration_System_Config__c>();
-    
-        for (Object rowObj : systems) {
-            if (!(rowObj instanceof Map<String, Object>)) {
+
+        Integer rowIndex = 0;
+        for (Object raw : normalized) {
+            rowIndex++;
+            if (!(raw instanceof Map<String, Object>)) {
+                System.debug('saveSystems – row ' + rowIndex +
+                             ' is not a Map<String,Object>, skipping: ' + raw);
                 continue;
             }
-    
-            Map<String, Object> row = (Map<String, Object>) rowObj;
-    
-            String devName = (String) row.get('developerName');
-    
+
+            Map<String, Object> row = (Map<String, Object>) raw;
+
+            String devName      = (String) row.get('developerName');
+            Object isActiveVal  = row.get('isActive');
+            Object mrVal        = row.get('maxRetries');
+
+            System.debug('saveSystems – row ' + rowIndex +
+                         ' devName=' + devName +
+                         ', raw isActive=' + isActiveVal +
+                         ', raw maxRetries=' + mrVal);
+
             if (String.isBlank(devName)) {
+                System.debug('saveSystems – row ' + rowIndex +
+                             ' has EMPTY developerName, skipping');
                 continue;
             }
-    
-            // --- TOLERANT BOOLEAN PARSE (isActive) ---
-            Boolean isActive;
-            Object isActiveVal = row.get('isActive');
+
+            // ============================================================
+            // UPDATE: ROBUST BOOLEAN PARSER
+            // Always produces TRUE or FALSE, never NULL.
+            // ============================================================
+            Boolean isActiveParsed = null;
+
             if (isActiveVal instanceof Boolean) {
-                isActive = (Boolean) isActiveVal;
-            } else if (isActiveVal instanceof String) {
+                isActiveParsed = (Boolean) isActiveVal;
+            }
+            else if (isActiveVal instanceof String) {
                 String s = ((String) isActiveVal).trim();
                 if (!String.isBlank(s)) {
-                    isActive = 'true'.equalsIgnoreCase(s);
+                    isActiveParsed = 'true'.equalsIgnoreCase(s);
                 }
             }
-    
-            // --- TOLERANT INTEGER PARSE (maxRetries) ---
-            Integer maxRetries;
-            Object mrVal = row.get('maxRetries');
+
+            System.debug('saveSystems – row ' + rowIndex +
+                         ' parsed isActive=' + isActiveParsed);
+
+            // ============================================================
+            // UPDATE: ROBUST INTEGER PARSER
+            // ============================================================
+            Integer maxRetriesParsed = null;
+
             if (mrVal instanceof Integer) {
-                maxRetries = (Integer) mrVal;
+                maxRetriesParsed = (Integer) mrVal;
             } else if (mrVal instanceof Long) {
-                maxRetries = Integer.valueOf((Long) mrVal);
+                maxRetriesParsed = Integer.valueOf((Long) mrVal);
             } else if (mrVal instanceof Decimal) {
-                maxRetries = ((Decimal) mrVal).intValue();
+                maxRetriesParsed = ((Decimal) mrVal).intValue();
             } else if (mrVal instanceof String) {
                 String s = ((String) mrVal).trim();
                 if (!String.isBlank(s)) {
                     try {
-                        maxRetries = Integer.valueOf(s);
+                        maxRetriesParsed = Integer.valueOf(s);
                     } catch (Exception e) {
                         System.debug('saveSystems – cannot parse maxRetries from String: ' + s);
                     }
                 }
             }
-    
-            // Existing or new row
+
+            System.debug('saveSystems – row ' + rowIndex +
+                         ' parsed maxRetries=' + maxRetriesParsed);
+
+            // ============================================================
+            // Existing or new system row
+            // ============================================================
             Integration_System_Config__c sys = byDevName.get(devName);
             Boolean isNew = (sys == null);
-    
+
             if (isNew) {
                 sys = new Integration_System_Config__c();
                 sys.DeveloperName__c = devName;
+                System.debug('saveSystems – INSERT new system for devName=' + devName);
+            } else {
+                System.debug('saveSystems – UPDATE existing Id=' + sys.Id +
+                             ' for devName=' + devName);
             }
-    
-            if (isActive != null) {
-                sys.IsActive__c = isActive;
+
+            // ============================================================
+            // UPDATE: always assign the value (false MUST overwrite true)
+            // If null → keep existing value
+            // ============================================================
+            if (isActiveParsed != null) {
+                sys.IsActive__c = isActiveParsed;
             }
-            if (maxRetries != null) {
-                sys.MaxRetries__c = maxRetries;
+
+            if (maxRetriesParsed != null) {
+                sys.MaxRetries__c = maxRetriesParsed;
             }
-    
-            // IMPORTANT: HandlerClass__c is intentionally NOT updated from the UI
-            // to keep it effectively read-only for admins.
-            // sys.HandlerClass__c = ...  // <- we do NOT touch this.
-    
+
+            // HandlerClass__c remains read-only (by design)
+
             if (isNew) {
                 toInsert.add(sys);
             } else {
                 toUpdate.add(sys);
             }
         }
-    
-        if (!toInsert.isEmpty()) {
-            insert toInsert;
-        }
-        if (!toUpdate.isEmpty()) {
-            update toUpdate;
-        }
-    }    
+
+        if (!toInsert.isEmpty()) insert toInsert;
+        if (!toUpdate.isEmpty()) update toUpdate;
+
+        System.debug('saveSystems – DML completed.');
+    }
+
 
     // =========================================================
     // OBJECT RULES  (Integration_Object_Rule__c)
@@ -203,18 +245,14 @@ public with sharing class IntegrationAdminController {
 
     @AuraEnabled
     public static void saveObjectConfigs(List<Object> configs) {
-        System.debug('=== [saveObjectConfigs] START ===');
-        System.debug('=== incoming raw size = ' + (configs == null ? 0 : configs.size()));
 
         if (configs == null || configs.isEmpty()) {
-            System.debug('[saveObjectConfigs] EXIT: no configs received');
             return;
         }
 
         // Normalize to plain maps
         List<Object> normalized =
             (List<Object>) JSON.deserializeUntyped(JSON.serialize(configs));
-        System.debug('[saveObjectConfigs] normalized size = ' + normalized.size());
 
         // Existing rules keyed by "SObject|System"
         // NOTE: TriggerReason__c is intentionally NOT part of the key anymore.
@@ -232,15 +270,13 @@ public with sharing class IntegrationAdminController {
             FROM Integration_Object_Rule__c
         ]) {
             String key = cfg.SObjectName__c + '|' + cfg.SystemDeveloperName__c;
-            // If multiple already exist from an older version, the "last wins" in the map.
-            // We do NOT auto-clean old duplicates here to avoid destructive behavior.
             existingByKey.put(key, cfg);
         }
 
         List<Integration_Object_Rule__c> toInsert = new List<Integration_Object_Rule__c>();
         List<Integration_Object_Rule__c> toUpdate = new List<Integration_Object_Rule__c>();
 
-        // NEW: Track duplicates in the incoming payload itself.
+        // Track duplicates in the incoming payload itself.
         Set<String> seenInPayload = new Set<String>();
 
         Integer idx = 0;
@@ -253,25 +289,13 @@ public with sharing class IntegrationAdminController {
             Boolean isActive     = (Boolean) row.get('isActive');
             String devName       = (String)  row.get('developerName');
 
-            System.debug(
-                '[saveObjectConfigs] ROW ' + idx++ +
-                ' | sObjectName=' + sObjectName +
-                ' | systemApiName=' + systemApiName +
-                ' | triggerReason=' + triggerReason +
-                ' | isActive=' + isActive +
-                ' | devName=' + devName
-            );
-
             if (String.isBlank(sObjectName) || String.isBlank(systemApiName)) {
-                System.debug('[saveObjectConfigs] SKIP row with missing sObjectName/systemApiName');
                 continue;
             }
 
             String key = sObjectName + '|' + systemApiName;
 
-            // ENFORCE: only one rule per (Object, System) in a single save call.
             if (seenInPayload.contains(key)) {
-                // Surface a clear message to the LWC / caller.
                 throw new AuraHandledException(
                     'Duplicate Object + System combination detected for ' +
                     sObjectName + ' / ' + systemApiName +
@@ -287,10 +311,8 @@ public with sharing class IntegrationAdminController {
                 cfg = new Integration_Object_Rule__c();
                 cfg.SObjectName__c         = sObjectName;
                 cfg.SystemDeveloperName__c = systemApiName;
-                // We still keep triggerReason on the record, but it is NOT part of the uniqueness key.
                 cfg.TriggerReason__c       = triggerReason;
             } else {
-                // Existing record – we allow updating TriggerReason__c.
                 cfg.TriggerReason__c = triggerReason;
             }
 
@@ -298,7 +320,6 @@ public with sharing class IntegrationAdminController {
 
             if (String.isBlank(cfg.DeveloperName__c)) {
                 if (String.isBlank(devName)) {
-                    // Use a deterministic DeveloperName__c based on Object + System (+ optional Trigger).
                     devName = (sObjectName + '_' + systemApiName).replace(' ', '_');
                     if (!String.isBlank(triggerReason)) {
                         devName += '_' + triggerReason.replace(' ', '_');
@@ -314,21 +335,13 @@ public with sharing class IntegrationAdminController {
             }
         }
 
-        System.debug('[saveObjectConfigs] toInsert=' + toInsert.size() +
-                    ', toUpdate=' + toUpdate.size());
-
         if (!toInsert.isEmpty()) {
             insert toInsert;
-            System.debug('[saveObjectConfigs] INSERT SUCCESS');
         }
         if (!toUpdate.isEmpty()) {
             update toUpdate;
-            System.debug('[saveObjectConfigs] UPDATE SUCCESS');
         }
-
-        System.debug('=== [saveObjectConfigs] END ===');
     }
-
 
     // =========================================================
     // FIELD MAPPINGS  (Integration_Field_Map_Config__c)
@@ -377,26 +390,15 @@ public with sharing class IntegrationAdminController {
         String systemApiName,
         List<Object> mappings
     ) {
-        System.debug('=== [saveFieldMappings] START ===');
-        System.debug(
-            '[saveFieldMappings] raw size=' +
-            (mappings == null ? 0 : mappings.size()) +
-            ' sObject=' + sObjectName +
-            ' system=' + systemApiName
-        );
-
         if (String.isBlank(sObjectName) || String.isBlank(systemApiName)) {
-            System.debug('[saveFieldMappings] EXIT: missing sObjectName/systemApiName');
             return;
         }
         if (mappings == null || mappings.isEmpty()) {
-            System.debug('[saveFieldMappings] EXIT: no mappings received');
             return;
         }
 
         List<Object> normalized =
             (List<Object>) JSON.deserializeUntyped(JSON.serialize(mappings));
-        System.debug('[saveFieldMappings] normalized size=' + normalized.size());
 
         Map<String, Integration_Field_Map_Config__c> existingBySource =
             new Map<String, Integration_Field_Map_Config__c>();
@@ -424,7 +426,6 @@ public with sharing class IntegrationAdminController {
         List<Integration_Field_Map_Config__c> toUpdate =
             new List<Integration_Field_Map_Config__c>();
 
-        // NEW: enforce uniqueness of SourceFieldAPI__c within this save request.
         Set<String> seenInPayload = new Set<String>();
 
         Integer idx = 0;
@@ -437,21 +438,10 @@ public with sharing class IntegrationAdminController {
             String dataType        = (String)  row.get('dataType');
             String devName         = (String)  row.get('developerName');
 
-            System.debug(
-                '[saveFieldMappings] ROW ' + idx++ +
-                ' | sourceFieldAPI=' + sourceFieldAPI +
-                ' | targetFieldName=' + targetFieldName +
-                ' | isRequired=' + isRequired +
-                ' | dataType=' + dataType +
-                ' | devName=' + devName
-            );
-
             if (String.isBlank(sourceFieldAPI)) {
-                System.debug('[saveFieldMappings] SKIP row with empty sourceFieldAPI');
                 continue;
             }
 
-            // ENFORCE: each source field can only appear once per Object + System in a single save call.
             if (seenInPayload.contains(sourceFieldAPI)) {
                 throw new AuraHandledException(
                     'Duplicate field mapping detected for source field ' +
@@ -490,19 +480,12 @@ public with sharing class IntegrationAdminController {
             }
         }
 
-        System.debug('[saveFieldMappings] toInsert=' + toInsert.size() +
-                    ', toUpdate=' + toUpdate.size());
-
         if (!toInsert.isEmpty()) {
             insert toInsert;
-            System.debug('[saveFieldMappings] INSERT SUCCESS');
         }
         if (!toUpdate.isEmpty()) {
             update toUpdate;
-            System.debug('[saveFieldMappings] UPDATE SUCCESS');
         }
-
-        System.debug('=== [saveFieldMappings] END ===');
     }
 
     // =========================================================
@@ -550,7 +533,6 @@ public with sharing class IntegrationAdminController {
             WHERE IsActive__c = true
             ORDER BY SObjectName__c
         ]) {
-            // Make sure the object actually exists in the org
             Schema.SObjectType sType = Schema.getGlobalDescribe().get(def.SObjectName__c);
             if (sType == null) {
                 System.debug('WARN [getIntegratableObjects]: CMDT declares SObject ' +
@@ -572,5 +554,4 @@ public with sharing class IntegrationAdminController {
 
         return result;
     }
-    
 }
