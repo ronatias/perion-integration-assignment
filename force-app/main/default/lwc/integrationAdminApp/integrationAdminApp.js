@@ -181,8 +181,28 @@ export default class IntegrationAdminApp extends LightningElement {
     }
 
     async handleSaveObjectConfigs() {
-        this.isLoading = true;
+        this.isLoading = false; // make sure spinner is off until validation passes
         this.errorMessage = null;
+    
+        // NEW: Enforce uniqueness of (sObjectName + systemApiName) on the client side.
+        // This keeps the UX clean and prevents the admin from saving ambiguous rules.
+        const seenPairs = new Set();
+        for (const cfg of this.objectConfigs) {
+            if (!cfg.sObjectName || !cfg.systemApiName) {
+                // Ignore incomplete rows – they won't be saved anyway in Apex.
+                continue;
+            }
+            const key = `${cfg.sObjectName}::${cfg.systemApiName}`;
+            if (seenPairs.has(key)) {
+                this.errorMessage =
+                    'Duplicate Object + System mapping detected. ' +
+                    'Only one rule per Object + System combination is allowed.';
+                return; // Abort save – backend will not be called.
+            }
+            seenPairs.add(key);
+        }
+    
+        this.isLoading = true;
         try {
             // Strip rowId before sending to Apex
             const payload = this.objectConfigs.map(cfg => ({
@@ -199,6 +219,7 @@ export default class IntegrationAdminApp extends LightningElement {
             this.isLoading = false;
         }
     }
+    
 
     // ===================== FIELD MAPPINGS TAB =====================
 
@@ -276,9 +297,28 @@ export default class IntegrationAdminApp extends LightningElement {
 
     async handleSaveFieldMappings() {
         if (this.isAddFieldDisabled) return;
-
-        this.isLoading = true;
+    
         this.errorMessage = null;
+    
+        // NEW: Enforce uniqueness of SourceFieldAPI per Object + System on client side.
+        // For a given Object + System, the same source field should not be mapped twice.
+        const seenFields = new Set();
+        for (const fm of this.fieldMappings) {
+            if (!fm.sourceFieldAPI) {
+                // Ignore empty lines – they won't be persisted meaningfully anyway.
+                continue;
+            }
+            const key = fm.sourceFieldAPI;
+            if (seenFields.has(key)) {
+                this.errorMessage =
+                    'Duplicate field mapping detected. ' +
+                    'The same source field cannot be mapped more than once for the selected Object + System.';
+                return; // Abort save – backend will not be called.
+            }
+            seenFields.add(key);
+        }
+    
+        this.isLoading = true;
         try {
             const payload = this.fieldMappings.map(fm => ({
                 developerName: fm.developerName,
@@ -300,4 +340,5 @@ export default class IntegrationAdminApp extends LightningElement {
             this.isLoading = false;
         }
     }
+    
 }

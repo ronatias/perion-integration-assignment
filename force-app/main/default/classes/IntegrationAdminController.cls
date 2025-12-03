@@ -210,28 +210,32 @@ public with sharing class IntegrationAdminController {
             (List<Object>) JSON.deserializeUntyped(JSON.serialize(configs));
         System.debug('[saveObjectConfigs] normalized size = ' + normalized.size());
 
-        // Existing rules keyed by "SObject|System|Trigger"
+        // Existing rules keyed by "SObject|System"
+        // NOTE: TriggerReason__c is intentionally NOT part of the key anymore.
+        //       We enforce exactly one rule per (SObjectName__c, SystemDeveloperName__c).
         Map<String, Integration_Object_Rule__c> existingByKey =
             new Map<String, Integration_Object_Rule__c>();
 
         for (Integration_Object_Rule__c cfg : [
             SELECT Id,
-                   DeveloperName__c,
-                   SObjectName__c,
-                   SystemDeveloperName__c,
-                   TriggerReason__c,
-                   IsActive__c
+                DeveloperName__c,
+                SObjectName__c,
+                SystemDeveloperName__c,
+                TriggerReason__c,
+                IsActive__c
             FROM Integration_Object_Rule__c
         ]) {
-            String trigPart = (cfg.TriggerReason__c == null ? '' : cfg.TriggerReason__c);
-            String key = cfg.SObjectName__c + '|' +
-                         cfg.SystemDeveloperName__c + '|' +
-                         trigPart;
+            String key = cfg.SObjectName__c + '|' + cfg.SystemDeveloperName__c;
+            // If multiple already exist from an older version, the "last wins" in the map.
+            // We do NOT auto-clean old duplicates here to avoid destructive behavior.
             existingByKey.put(key, cfg);
         }
 
         List<Integration_Object_Rule__c> toInsert = new List<Integration_Object_Rule__c>();
         List<Integration_Object_Rule__c> toUpdate = new List<Integration_Object_Rule__c>();
+
+        // NEW: Track duplicates in the incoming payload itself.
+        Set<String> seenInPayload = new Set<String>();
 
         Integer idx = 0;
         for (Object raw : normalized) {
@@ -257,8 +261,18 @@ public with sharing class IntegrationAdminController {
                 continue;
             }
 
-            String trigPart = (triggerReason == null ? '' : triggerReason);
-            String key = sObjectName + '|' + systemApiName + '|' + trigPart;
+            String key = sObjectName + '|' + systemApiName;
+
+            // ENFORCE: only one rule per (Object, System) in a single save call.
+            if (seenInPayload.contains(key)) {
+                // Surface a clear message to the LWC / caller.
+                throw new AuraHandledException(
+                    'Duplicate Object + System combination detected for ' +
+                    sObjectName + ' / ' + systemApiName +
+                    '. Only one Integration_Object_Rule__c is allowed per Object + System.'
+                );
+            }
+            seenInPayload.add(key);
 
             Integration_Object_Rule__c cfg = existingByKey.get(key);
             Boolean isNew = (cfg == null);
@@ -267,13 +281,18 @@ public with sharing class IntegrationAdminController {
                 cfg = new Integration_Object_Rule__c();
                 cfg.SObjectName__c         = sObjectName;
                 cfg.SystemDeveloperName__c = systemApiName;
+                // We still keep triggerReason on the record, but it is NOT part of the uniqueness key.
                 cfg.TriggerReason__c       = triggerReason;
+            } else {
+                // Existing record – we allow updating TriggerReason__c.
+                cfg.TriggerReason__c = triggerReason;
             }
 
             cfg.IsActive__c = isActive;
 
             if (String.isBlank(cfg.DeveloperName__c)) {
                 if (String.isBlank(devName)) {
+                    // Use a deterministic DeveloperName__c based on Object + System (+ optional Trigger).
                     devName = (sObjectName + '_' + systemApiName).replace(' ', '_');
                     if (!String.isBlank(triggerReason)) {
                         devName += '_' + triggerReason.replace(' ', '_');
@@ -290,7 +309,7 @@ public with sharing class IntegrationAdminController {
         }
 
         System.debug('[saveObjectConfigs] toInsert=' + toInsert.size() +
-                     ', toUpdate=' + toUpdate.size());
+                    ', toUpdate=' + toUpdate.size());
 
         if (!toInsert.isEmpty()) {
             insert toInsert;
@@ -303,6 +322,7 @@ public with sharing class IntegrationAdminController {
 
         System.debug('=== [saveObjectConfigs] END ===');
     }
+
 
     // =========================================================
     // FIELD MAPPINGS  (Integration_Field_Map_Config__c)
@@ -377,16 +397,16 @@ public with sharing class IntegrationAdminController {
 
         for (Integration_Field_Map_Config__c fm : [
             SELECT Id,
-                   DeveloperName__c,
-                   SObjectName__c,
-                   SystemDeveloperName__c,
-                   SourceFieldAPI__c,
-                   TargetFieldName__c,
-                   IsRequired__c,
-                   DataType__c
+                DeveloperName__c,
+                SObjectName__c,
+                SystemDeveloperName__c,
+                SourceFieldAPI__c,
+                TargetFieldName__c,
+                IsRequired__c,
+                DataType__c
             FROM Integration_Field_Map_Config__c
             WHERE SObjectName__c = :sObjectName
-              AND SystemDeveloperName__c = :systemApiName
+            AND SystemDeveloperName__c = :systemApiName
         ]) {
             if (!String.isBlank(fm.SourceFieldAPI__c)) {
                 existingBySource.put(fm.SourceFieldAPI__c, fm);
@@ -397,6 +417,9 @@ public with sharing class IntegrationAdminController {
             new List<Integration_Field_Map_Config__c>();
         List<Integration_Field_Map_Config__c> toUpdate =
             new List<Integration_Field_Map_Config__c>();
+
+        // NEW: enforce uniqueness of SourceFieldAPI__c within this save request.
+        Set<String> seenInPayload = new Set<String>();
 
         Integer idx = 0;
         for (Object raw : normalized) {
@@ -421,6 +444,16 @@ public with sharing class IntegrationAdminController {
                 System.debug('[saveFieldMappings] SKIP row with empty sourceFieldAPI');
                 continue;
             }
+
+            // ENFORCE: each source field can only appear once per Object + System in a single save call.
+            if (seenInPayload.contains(sourceFieldAPI)) {
+                throw new AuraHandledException(
+                    'Duplicate field mapping detected for source field ' +
+                    sourceFieldAPI + ' on ' + sObjectName + ' / ' + systemApiName +
+                    '. Each source field can only be mapped once per Object + System.'
+                );
+            }
+            seenInPayload.add(sourceFieldAPI);
 
             Integration_Field_Map_Config__c fm = existingBySource.get(sourceFieldAPI);
             Boolean isNew = (fm == null);
@@ -452,7 +485,7 @@ public with sharing class IntegrationAdminController {
         }
 
         System.debug('[saveFieldMappings] toInsert=' + toInsert.size() +
-                     ', toUpdate=' + toUpdate.size());
+                    ', toUpdate=' + toUpdate.size());
 
         if (!toInsert.isEmpty()) {
             insert toInsert;
