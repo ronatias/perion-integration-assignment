@@ -1,23 +1,18 @@
 // BillingAdapter.cls
-// Purpose:
-//  - Simulate Billing system integration.
-//  - Demonstrate temp vs permanent failures based on payload.
+// Case 1: Always SUCCESS.
+// Also logs the payload structure that would be sent to the Billing system.
 public with sharing class BillingAdapter implements IIntegrationAdapter {
 
     public IntegrationResult send(IntegrationContext ctx) {
-        // Value mapped via Integration_Field_Map__mdt.TargetFieldName__c = 'totalAmount'
-        Decimal amount = (Decimal) ctx.payload.get('totalAmount');
+        Integer attempt = (ctx.attemptNumber == null) ? 0 : ctx.attemptNumber;
 
-        // Simulate a business validation error (permanent)
-        if (amount != null && amount > 100000) {
-            return IntegrationResult.permanentError(400, 'Amount too large for Billing');
-        }
+        System.debug('=== BillingAdapter – attempt=' + attempt);
+        System.debug('BillingAdapter payload: ' +
+            JSON.serializePretty(ctx.payload)
+        );
 
-        // Simulate 503 transient issues
-        if (Math.random() < 0.3) {
-            return IntegrationResult.tempError(503, 'Billing system temporarily unavailable');
-        }
-
-        return IntegrationResult.success('Billing OK');
+        return IntegrationResult.success(
+            'Billing success (demo, attempt ' + attempt + ')'
+        );
     }
 }
