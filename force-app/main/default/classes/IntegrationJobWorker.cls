@@ -279,57 +279,67 @@ public with sharing class IntegrationJobWorker
         }
     }
 
-    // Bulk + object-level-secure load of source records
-private static Map<String, Map<Id, SObject>> loadAndSecureRecords(
-    List<Integration_Job__c> jobs
-) {
-    Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
+    // Bulk + CRUD-safe load of source records
+    private static Map<String, Map<Id, SObject>> loadAndSecureRecords(
+        List<Integration_Job__c> jobs
+    ) {
+        // Group record Ids by SObject type
+        Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
 
-    for (Integration_Job__c job : jobs) {
-        if (!idsByType.containsKey(job.SObjectName__c)) {
-            idsByType.put(job.SObjectName__c, new Set<Id>());
+        for (Integration_Job__c job : jobs) {
+            if (String.isBlank(job.SObjectName__c) || job.RecordId__c == null) continue;
+
+            if (!idsByType.containsKey(job.SObjectName__c)) {
+                idsByType.put(job.SObjectName__c, new Set<Id>());
+            }
+            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
         }
-        idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
+
+        Map<String, Map<Id, SObject>> result = new Map<String, Map<Id, SObject>>();
+
+        // For each SObject type, query its records in bulk
+        for (String sObjName : idsByType.keySet()) {
+            Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjName);
+            if (sType == null) continue;
+
+            Schema.DescribeSObjectResult d = sType.getDescribe();
+
+            // CRUD: object-level access check
+            if (!d.isAccessible()) {
+                // We skip loading records for this type; jobs will be marked
+                // as failed later when no records are found.
+                continue;
+            }
+
+            Set<Id> ids = idsByType.get(sObjName);
+            if (ids == null || ids.isEmpty()) {
+                continue;
+            }
+
+            // IMPORTANT FIX:
+            //  - Do NOT use FIELDS(ALL) → causes "unbounded set of fields" error
+            //  - Use FIELDS(STANDARD) which is supported across APIs.
+            //  - For this assignment, we assume mapped fields are standard
+            //    (Amount, CloseDate, Name, StageName, etc.).
+            String soql = 'SELECT FIELDS(STANDARD) FROM ' + sObjName + ' WHERE Id IN :ids';
+
+            List<SObject> recs = Database.query(soql);
+
+            // NOTE:
+            //  - We're not using Security.stripInaccessible here, because the
+            //    org/API version may not support the Security class.
+            //  - If you upgrade API and have Security.stripInaccessible, you can
+            //    wrap recs to enforce FLS at field level.
+            //      recs = (List<SObject>) Security
+            //              .stripInaccessible(AccessType.READABLE, recs)
+            //              .getRecords();
+
+            result.put(sObjName, new Map<Id, SObject>(recs));
+        }
+
+        return result;
     }
 
-    Map<String, Map<Id, SObject>> result =
-        new Map<String, Map<Id, SObject>>();
-
-    for (String sObjName : idsByType.keySet()) {
-        Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjName);
-        if (sType == null) continue;
-
-        Schema.DescribeSObjectResult d = sType.getDescribe();
-
-        // CRUD: object-level access
-        if (!d.isAccessible()) {
-            // Jobs for this type will be marked as failed later.
-            continue;
-        }
-
-        // IMPORTANT FIX:
-        //  - We must bind a local variable (ids) in the dynamic SOQL.
-        //  - Apex does NOT allow "Id IN :idsByType.get(sObjName)" inside the string.
-        Set<Id> ids = idsByType.get(sObjName);
-        if (ids == null || ids.isEmpty()) {
-            continue;
-        }
-
-        String soql =
-            'SELECT FIELDS(ALL) FROM ' + sObjName + ' WHERE Id IN :ids';
-
-        List<SObject> recs = Database.query(soql);
-
-        // NOTE: We are not calling Security.stripInaccessible here due to
-        //       API compatibility in this org. If you upgrade the API
-        //       version and have Security.stripInaccessible available,
-        //       you can add a field-level FLS enforcement step here.
-
-        result.put(sObjName, new Map<Id, SObject>(recs));
-    }
-
-    return result;
-}
 
     // Build payload from Integration_Field_Map_Config__c rows
     private static Map<String, Object> buildPayloadFromFieldMaps(
