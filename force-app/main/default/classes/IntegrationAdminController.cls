@@ -1,16 +1,25 @@
 // IntegrationAdminController.cls
 // Purpose:
-//  - Back-end for the Integration Admin LWC.
-//  - Allows admins to view and edit:
+//  - Back-end for the Integration Admin LWC (integrationAdminApp).
+//  - Allows admins to view and edit integration configuration stored in Custom Metadata:
 //      * Integration_System__mdt
 //      * Integration_Object_Config__mdt
 //      * Integration_Field_Map__mdt
-//  - Also exposes available fields for each SObject for dropdowns.
+//      * Integration_Enabled_Object__mdt (governed list of allowed SObjects)
+//  - Uses the Apex Metadata API (Metadata.Operations.enqueueDeployment) because
+//    DML is NOT allowed on Custom Metadata types.
+//
+// Key design points:
+//  - Read paths use normal SOQL on CMDT.
+//  - Write paths build Metadata.CustomMetadata records and deploy them.
+//  - DTO types come from IntegrationAdminDTOs to keep UI and storage decoupled.
+
 public with sharing class IntegrationAdminController {
 
     //
     // SYSTEM CONFIG
     //
+
     @AuraEnabled(cacheable=true)
     public static List<IntegrationAdminDTOs.SystemConfigDTO> getSystems() {
         List<IntegrationAdminDTOs.SystemConfigDTO> result = new List<IntegrationAdminDTOs.SystemConfigDTO>();
@@ -24,8 +33,13 @@ public with sharing class IntegrationAdminController {
             dto.developerName = sys.DeveloperName;
             dto.label         = sys.MasterLabel;
             dto.isActive      = sys.IsActive__c;
-            dto.maxRetries    = sys.MaxRetries__c;
-            dto.handlerClass  = sys.HandlerClass__c;
+
+            // MaxRetries__c is Number(Decimal) on CMDT; DTO uses Integer.
+            dto.maxRetries = (sys.MaxRetries__c == null)
+                ? null
+                : Integer.valueOf(sys.MaxRetries__c.intValue());
+
+            dto.handlerClass = sys.HandlerClass__c;
             result.add(dto);
         }
         return result;
@@ -33,28 +47,38 @@ public with sharing class IntegrationAdminController {
 
     @AuraEnabled
     public static void saveSystems(List<IntegrationAdminDTOs.SystemConfigDTO> systems) {
+        // Purpose:
+        //  - Persist edited Integration_System__mdt rows using Metadata API.
+        // Notes:
+        //  - We “upsert” based on fullName = 'Integration_System__mdt.<DeveloperName>'.
         if (systems == null || systems.isEmpty()) return;
 
-        List<Integration_System__mdt> toUpsert = new List<Integration_System__mdt>();
+        List<Metadata.CustomMetadata> toDeploy = new List<Metadata.CustomMetadata>();
 
         for (IntegrationAdminDTOs.SystemConfigDTO dto : systems) {
-            Integration_System__mdt sys = Integration_System__mdt.getInstance(dto.developerName);
-            if (sys == null) continue;
+            if (String.isBlank(dto.developerName)) continue;
 
-            sys.IsActive__c   = dto.isActive;
-            sys.MaxRetries__c = dto.maxRetries;
-            // HandlerClass__c typically controlled by dev team.
+            Metadata.CustomMetadata cmd = new Metadata.CustomMetadata();
+            cmd.fullName = 'Integration_System__mdt.' + dto.developerName;
+            cmd.label    = dto.label;
 
-            toUpsert.add(sys);
+            // Initialize values list
+            cmd.values = new List<Metadata.CustomMetadataValue>();
+
+            addCmdValue(cmd, 'IsActive__c', dto.isActive);
+            addCmdValue(cmd, 'MaxRetries__c', dto.maxRetries);
+            addCmdValue(cmd, 'HandlerClass__c', dto.handlerClass);
+
+            toDeploy.add(cmd);
         }
-        if (!toUpsert.isEmpty()) {
-            upsert toUpsert;
-        }
+
+        deployCustomMetadata(toDeploy);
     }
 
     //
     // OBJECT CONFIG
     //
+
     @AuraEnabled(cacheable=true)
     public static List<IntegrationAdminDTOs.ObjectConfigDTO> getObjectConfigs() {
         List<IntegrationAdminDTOs.ObjectConfigDTO> result = new List<IntegrationAdminDTOs.ObjectConfigDTO>();
@@ -78,42 +102,44 @@ public with sharing class IntegrationAdminController {
 
     @AuraEnabled
     public static void saveObjectConfigs(List<IntegrationAdminDTOs.ObjectConfigDTO> configs) {
+        // Purpose:
+        //  - Create/update Integration_Object_Config__mdt records
+        //    via Metadata API (no direct DML on CMDT).
+        // Notes:
+        //  - We build a deterministic DeveloperName when missing.
         if (configs == null || configs.isEmpty()) return;
 
-        List<Integration_Object_Config__mdt> toUpsert = new List<Integration_Object_Config__mdt>();
+        List<Metadata.CustomMetadata> toDeploy = new List<Metadata.CustomMetadata>();
 
         for (IntegrationAdminDTOs.ObjectConfigDTO dto : configs) {
             if (String.isBlank(dto.sObjectName) || String.isBlank(dto.systemApiName)) continue;
 
-            Integration_Object_Config__mdt cfg =
-                String.isBlank(dto.developerName)
-                    ? null
-                    : Integration_Object_Config__mdt.getInstance(dto.developerName);
-
-            if (cfg == null) {
-                String devName = (dto.sObjectName + '_' + dto.systemApiName).replace(' ', '_');
-                cfg = new Integration_Object_Config__mdt(
-                    DeveloperName = devName,
-                    MasterLabel   = dto.sObjectName + ' - ' + dto.systemApiName
-                );
+            String devName = dto.developerName;
+            if (String.isBlank(devName)) {
+                devName = (dto.sObjectName + '_' + dto.systemApiName).replace(' ', '_');
             }
 
-            cfg.SObjectName__c   = dto.sObjectName;
-            cfg.SystemApiName__c = dto.systemApiName;
-            cfg.TriggerReason__c = dto.triggerReason;
-            cfg.IsActive__c      = dto.isActive;
+            Metadata.CustomMetadata cmd = new Metadata.CustomMetadata();
+            cmd.fullName = 'Integration_Object_Config__mdt.' + devName;
+            cmd.label    = dto.sObjectName + ' - ' + dto.systemApiName;
 
-            toUpsert.add(cfg);
+            cmd.values = new List<Metadata.CustomMetadataValue>();
+
+            addCmdValue(cmd, 'SObjectName__c', dto.sObjectName);
+            addCmdValue(cmd, 'SystemApiName__c', dto.systemApiName);
+            addCmdValue(cmd, 'TriggerReason__c', dto.triggerReason);
+            addCmdValue(cmd, 'IsActive__c', dto.isActive);
+
+            toDeploy.add(cmd);
         }
 
-        if (!toUpsert.isEmpty()) {
-            upsert toUpsert;
-        }
+        deployCustomMetadata(toDeploy);
     }
 
     //
     // FIELD MAPPINGS
     //
+
     @AuraEnabled(cacheable=true)
     public static List<IntegrationAdminDTOs.FieldMapDTO> getFieldMappings(
         String sObjectName,
@@ -131,13 +157,13 @@ public with sharing class IntegrationAdminController {
             ORDER BY SourceFieldAPI__c
         ]) {
             IntegrationAdminDTOs.FieldMapDTO dto = new IntegrationAdminDTOs.FieldMapDTO();
-            dto.developerName  = fm.DeveloperName;
-            dto.sObjectName    = fm.SObjectName__c;
-            dto.systemApiName  = fm.SystemApiName__c;
-            dto.sourceFieldAPI = fm.SourceFieldAPI__c;
+            dto.developerName   = fm.DeveloperName;
+            dto.sObjectName     = fm.SObjectName__c;
+            dto.systemApiName   = fm.SystemApiName__c;
+            dto.sourceFieldAPI  = fm.SourceFieldAPI__c;
             dto.targetFieldName = fm.TargetFieldName__c;
-            dto.isRequired     = fm.IsRequired__c;
-            dto.dataType       = fm.DataType__c;
+            dto.isRequired      = fm.IsRequired__c;
+            dto.dataType        = fm.DataType__c;
             result.add(dto);
         }
 
@@ -150,54 +176,55 @@ public with sharing class IntegrationAdminController {
         String systemApiName,
         List<IntegrationAdminDTOs.FieldMapDTO> mappings
     ) {
+        // Purpose:
+        //  - Create/update Integration_Field_Map__mdt records via Metadata API.
         if (String.isBlank(sObjectName) || String.isBlank(systemApiName) ||
             mappings == null || mappings.isEmpty()) {
             return;
         }
 
-        List<Integration_Field_Map__mdt> toUpsert = new List<Integration_Field_Map__mdt>();
+        List<Metadata.CustomMetadata> toDeploy = new List<Metadata.CustomMetadata>();
 
         for (IntegrationAdminDTOs.FieldMapDTO dto : mappings) {
             if (String.isBlank(dto.sourceFieldAPI)) continue;
 
-            Integration_Field_Map__mdt fm =
-                String.isBlank(dto.developerName)
-                    ? null
-                    : Integration_Field_Map__mdt.getInstance(dto.developerName);
-
-            if (fm == null) {
-                String devName = (dto.sObjectName + '_' +
-                                  dto.systemApiName + '_' +
-                                  dto.sourceFieldAPI).replace(' ', '_');
-                fm = new Integration_Field_Map__mdt(
-                    DeveloperName = devName,
-                    MasterLabel   = dto.sObjectName + ' ' +
-                                    dto.systemApiName + ' ' +
-                                    dto.sourceFieldAPI
-                );
+            String devName = dto.developerName;
+            if (String.isBlank(devName)) {
+                devName = (sObjectName + '_' + systemApiName + '_' + dto.sourceFieldAPI)
+                    .replace(' ', '_');
             }
 
-            fm.SObjectName__c    = sObjectName;
-            fm.SystemApiName__c  = systemApiName;
-            fm.SourceFieldAPI__c = dto.sourceFieldAPI;
-            fm.TargetFieldName__c = dto.targetFieldName;
-            fm.IsRequired__c     = dto.isRequired;
-            fm.DataType__c       = dto.dataType;
+            Metadata.CustomMetadata cmd = new Metadata.CustomMetadata();
+            cmd.fullName = 'Integration_Field_Map__mdt.' + devName;
+            cmd.label    = sObjectName + ' ' + systemApiName + ' ' + dto.sourceFieldAPI;
 
-            toUpsert.add(fm);
+            cmd.values = new List<Metadata.CustomMetadataValue>();
+
+            addCmdValue(cmd, 'SObjectName__c', sObjectName);
+            addCmdValue(cmd, 'SystemApiName__c', systemApiName);
+            addCmdValue(cmd, 'SourceFieldAPI__c', dto.sourceFieldAPI);
+            addCmdValue(cmd, 'TargetFieldName__c', dto.targetFieldName);
+            addCmdValue(cmd, 'IsRequired__c', dto.isRequired);
+            addCmdValue(cmd, 'DataType__c', dto.dataType);
+
+            toDeploy.add(cmd);
         }
 
-        if (!toUpsert.isEmpty()) {
-            upsert toUpsert;
-        }
+        deployCustomMetadata(toDeploy);
     }
 
     //
-    // AVAILABLE FIELDS (for dropdown in UI)
+    // AVAILABLE FIELDS (for field-mapping dropdown)
     //
+
     @AuraEnabled(cacheable=true)
     public static List<IntegrationAdminDTOs.FieldOptionDTO> getAvailableFields(String sObjectName) {
-        List<IntegrationAdminDTOs.FieldOptionDTO> result = new List<IntegrationAdminDTOs.FieldOptionDTO>();
+        // Purpose:
+        //  - Return all fields for a given SObject so the admin can choose
+        //    which ones to map in Integration_Field_Map__mdt.
+        List<IntegrationAdminDTOs.FieldOptionDTO> result =
+            new List<IntegrationAdminDTOs.FieldOptionDTO>();
+
         if (String.isBlank(sObjectName)) return result;
 
         Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjectName);
@@ -217,10 +244,18 @@ public with sharing class IntegrationAdminController {
         return result;
     }
 
-    // IntegrationAdminController.cls
-    // NEW VERSION of getIntegratableObjects() – now CMDT-driven
+    //
+    // INTEGRATABLE OBJECTS (governed by CMDT)
+    //
+
     @AuraEnabled(cacheable=true)
     public static List<IntegrationAdminDTOs.FieldOptionDTO> getIntegratableObjects() {
+        // Purpose:
+        //  - Provide the list of SObject API names the admin can select
+        //    when configuring Object→System mappings.
+        // Governance:
+        //  - Driven by Integration_Enabled_Object__mdt, so only objects
+        //    explicitly marked IsActive__c = true appear in the UI.
         List<IntegrationAdminDTOs.FieldOptionDTO> result =
             new List<IntegrationAdminDTOs.FieldOptionDTO>();
 
@@ -239,5 +274,34 @@ public with sharing class IntegrationAdminController {
         }
 
         return result;
+    }
+
+    //
+    // PRIVATE HELPERS: Metadata deployment helpers
+    //
+
+    // Helper to add a CustomMetadataValue to a CustomMetadata record
+    private static void addCmdValue(Metadata.CustomMetadata cmd, String fieldApi, Object value) {
+        Metadata.CustomMetadataValue v = new Metadata.CustomMetadataValue();
+        v.field = fieldApi;
+        v.value = value;
+        if (cmd.values == null) {
+            cmd.values = new List<Metadata.CustomMetadataValue>();
+        }
+        cmd.values.add(v);
+    }
+
+    // Helper to deploy a batch of CustomMetadata records
+    private static void deployCustomMetadata(List<Metadata.CustomMetadata> records) {
+        if (records == null || records.isEmpty()) return;
+
+        Metadata.DeployContainer container = new Metadata.DeployContainer();
+        for (Metadata.CustomMetadata cmd : records) {
+            container.addMetadata(cmd);
+        }
+
+        // We don't need a callback for this assignment, so pass null.
+        // Admin may need to refresh the UI after a few seconds to see changes.
+        Metadata.Operations.enqueueDeployment(container, null);
     }
 }

@@ -84,8 +84,10 @@ public with sharing class IntegrationJobWorker
 
         for (Integration_Field_Map__mdt fm : fieldMaps) {
             String key = fm.SObjectName__c + '|' + fm.SystemApiName__c;
-            fieldMapsByKey.putIfAbsent(key, new List<Integration_Field_Map__mdt>());
-            fieldMapsByKey.get(key).add(fm);
+            if (!fieldMapsByKey.containsKey(key)) {
+                fieldMapsByKey.put(key, new List<Integration_Field_Map__mdt>());
+            }
+            fieldMapsByKey.get(key).add(fm);            
         }
 
         // Load source records (with CRUD + FLS)
@@ -165,8 +167,8 @@ public with sharing class IntegrationJobWorker
             }
 
             job.LastAttemptAt__c = System.now();
-            Integer maxRetries    = sys.MaxRetries__c == null ? 0 : sys.MaxRetries__c;
-            Integer currentRetries = job.RetryCount__c == null ? 0 : job.RetryCount__c;
+            Integer maxRetries = (sys.MaxRetries__c == null) ? 0 : sys.MaxRetries__c.intValue();
+            Integer currentRetries = (job.RetryCount__c == null) ? 0 : job.RetryCount__c.intValue();
 
             if (result.isSuccess) {
                 job.Status__c   = 'Success';
@@ -201,8 +203,10 @@ public with sharing class IntegrationJobWorker
         Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
 
         for (Integration_Job__c job : jobs) {
-            idsByType.putIfAbsent(job.SObjectName__c, new Set<Id>());
-            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
+            if (!idsByType.containsKey(job.SObjectName__c)) {
+                idsByType.put(job.SObjectName__c, new Set<Id>());
+            }
+            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);            
         }
 
         Map<String, Map<Id, SObject>> result = new Map<String, Map<Id, SObject>>();

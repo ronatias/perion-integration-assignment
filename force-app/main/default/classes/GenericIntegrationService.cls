@@ -58,8 +58,10 @@ public with sharing class GenericIntegrationService {
 
         for (Integration_Object_Config__mdt cfg : configs) {
             String key = cfg.SObjectName__c + '|' + cfg.TriggerReason__c;
-            configsByKey.putIfAbsent(key, new List<Integration_Object_Config__mdt>());
-            configsByKey.get(key).add(cfg);
+            if (!configsByKey.containsKey(key)) {
+                configsByKey.put(key, new List<Integration_Object_Config__mdt>());
+            }
+            configsByKey.get(key).add(cfg);            
         }
 
         for (IntegrationRequestInput inReq : inputs) {

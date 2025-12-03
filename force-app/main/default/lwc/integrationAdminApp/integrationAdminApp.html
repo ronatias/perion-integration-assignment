@@ -6,6 +6,9 @@
           * Systems: manage Integration_System__mdt
           * Object Mappings: manage Integration_Object_Config__mdt
           * Field Mappings: manage Integration_Field_Map__mdt
+     Notes:
+      - Uses stable rowId property for <tr key=""> to satisfy LWC requirements.
+      - Tab button variants are bound to getters (no ternary in markup).
 -->
 
 <template>
@@ -17,19 +20,19 @@
                     label="Systems"
                     value="systems"
                     onclick={handleTabChange}
-                    variant={showSystemsTab ? 'brand' : 'neutral'}>
+                    variant={systemsTabVariant}>
                 </lightning-button>
                 <lightning-button
                     label="Object Mappings"
                     value="mappings"
                     onclick={handleTabChange}
-                    variant={showMappingsTab ? 'brand' : 'neutral'}>
+                    variant={mappingsTabVariant}>
                 </lightning-button>
                 <lightning-button
                     label="Field Mappings"
                     value="fields"
                     onclick={handleTabChange}
-                    variant={showFieldsTab ? 'brand' : 'neutral'}>
+                    variant={fieldsTabVariant}>
                 </lightning-button>
             </lightning-button-group>
         </div>
@@ -103,7 +106,7 @@
         </template>
 
         <!-- ===================== OBJECT MAPPINGS TAB ===================== -->
-        <!-- CHANGED: sObjectName + systemApiName now use comboboxes (sObjectOptions, systemOptions) -->
+        <!-- Uses comboboxes for SObject and System (driven by CMDT) and rowId as key -->
         <template if:true={showMappingsTab}>
             <div class="slds-p-around_small">
                 <div class="slds-grid slds-wrap slds-m-bottom_small">
@@ -134,7 +137,7 @@
                     </thead>
                     <tbody>
                         <template for:each={objectConfigs} for:item="cfg" for:index="index">
-                            <tr key={index}>
+                            <tr key={cfg.rowId}>
                                 <td>
                                     <!-- SObject combobox (driven by Integration_Enabled_Object__mdt) -->
                                     <lightning-combobox
@@ -223,7 +226,7 @@
                     </thead>
                     <tbody>
                         <template for:each={fieldMappings} for:item="fm" for:index="index">
-                            <tr key={index}>
+                            <tr key={fm.rowId}>
                                 <td>
                                     <lightning-combobox
                                         data-index={index}
