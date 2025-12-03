@@ -504,24 +504,34 @@ public with sharing class IntegrationAdminController {
         List<IntegrationAdminDTOs.FieldOptionDTO> result =
             new List<IntegrationAdminDTOs.FieldOptionDTO>();
 
-        // For the assignment we keep it simple (Opportunity only).
-        // You can later wire this to Integration_Enabled_Object__mdt if needed.
-        List<String> apiNames = new List<String>{ 'Opportunity' };
+        // Governed list of integratable objects via CMDT
+        for (Integration_Enabled_Object__mdt def : [
+            SELECT SObjectName__c, DisplayLabel__c, IsActive__c
+            FROM Integration_Enabled_Object__mdt
+            WHERE IsActive__c = true
+            ORDER BY SObjectName__c
+        ]) {
+            // Make sure the object actually exists in the org
+            Schema.SObjectType sType = Schema.getGlobalDescribe().get(def.SObjectName__c);
+            if (sType == null) {
+                System.debug('WARN [getIntegratableObjects]: CMDT declares SObject ' +
+                            def.SObjectName__c + ' but it does not exist in this org');
+                continue;
+            }
 
-        Map<String, Schema.SObjectType> all = Schema.getGlobalDescribe();
-
-        for (String api : apiNames) {
-            Schema.SObjectType sType = all.get(api);
-            if (sType == null) continue;
-            Schema.DescribeSObjectResult d = sType.getDescribe();
+            Schema.DescribeSObjectResult sDesc = sType.getDescribe();
 
             IntegrationAdminDTOs.FieldOptionDTO dto =
                 new IntegrationAdminDTOs.FieldOptionDTO();
-            dto.apiName = api;
-            dto.label   = d.getLabel();
+            dto.apiName = def.SObjectName__c;
+            dto.label   = String.isBlank(def.DisplayLabel__c)
+                ? sDesc.getLabel()
+                : def.DisplayLabel__c;
+
             result.add(dto);
         }
 
         return result;
     }
+    
 }

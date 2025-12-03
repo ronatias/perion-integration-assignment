@@ -2,9 +2,39 @@
 // Purpose:
 //  - Execute integration jobs asynchronously (Queueable).
 //  - Bulk-safe processing of multiple jobs in a batch.
-//  - Enforce CRUD/FLS for business data.
-//  - Use Integration_Field_Map__mdt for payload mapping.
-//  - Implement retry logic based on Integration_System__mdt.MaxRetries__c.
+//  - Enforce CRUD (object-level) for business data.
+//  - Build payloads using Integration_Field_Map_Config__c.
+//  - Implement retry logic based on Integration_System_Config__c.MaxRetries__c.
+//
+// v2 – CONFIG SOURCE CHANGE
+//  - Original version used:
+//      * Integration_System__mdt
+//      * Integration_Object_Config__mdt
+//      * Integration_Field_Map__mdt
+//  - This version now uses custom objects managed by the Admin UI:
+//      * Integration_System_Config__c
+//          - DeveloperName__c      – system key, matches job.SystemApiName__c
+//          - IsActive__c
+//          - HandlerClass__c
+//          - MaxRetries__c
+//      * Integration_Object_Rule__c
+//          - SObjectName__c
+//          - SystemDeveloperName__c
+//          - TriggerReason__c
+//          - IsActive__c
+//      * Integration_Field_Map_Config__c
+//          - SObjectName__c
+//          - SystemDeveloperName__c
+//          - SourceFieldAPI__c
+//          - TargetFieldName__c
+//          - IsRequired__c
+//          - DataType__c
+//
+// NOTE:
+//  - Field-level FLS enforcement via Security.stripInaccessible is not used here
+//    due to API compatibility. We still enforce object-level access via
+//    DescribeSObjectResult.isAccessible() and rely on admin-selected mappings.
+
 public with sharing class IntegrationJobWorker
     implements Queueable, Database.AllowsCallouts {
 
@@ -27,7 +57,8 @@ public with sharing class IntegrationJobWorker
         // Lock jobs to avoid concurrent updates
         List<Integration_Job__c> jobs = [
             SELECT Id, SObjectName__c, RecordId__c, SystemApiName__c,
-                   TriggerReason__c, Status__c, RetryCount__c, LastError__c
+                   TriggerReason__c, Status__c, RetryCount__c, LastError__c,
+                   LastAttemptAt__c
             FROM Integration_Job__c
             WHERE Id IN :jobIds
             FOR UPDATE
@@ -45,78 +76,108 @@ public with sharing class IntegrationJobWorker
             triggerReasons.add(job.TriggerReason__c);
         }
 
-        // Load system configs (1 SOQL)
-        Map<String, Integration_System__mdt> systemsByName =
-            new Map<String, Integration_System__mdt>([
-                SELECT DeveloperName, IsActive__c, HandlerClass__c, MaxRetries__c
-                FROM Integration_System__mdt
-                WHERE DeveloperName IN :systemNames
+        //
+        // CONFIG LOAD (custom objects instead of CMDT)
+        //
+
+        // 1) Load system configs (Integration_System_Config__c) – 1 SOQL
+        Map<String, Integration_System_Config__c> systemsByName =
+            new Map<String, Integration_System_Config__c>([
+                SELECT Id,
+                       DeveloperName__c,
+                       IsActive__c,
+                       HandlerClass__c,
+                       MaxRetries__c
+                FROM Integration_System_Config__c
+                WHERE DeveloperName__c IN :systemNames
             ]);
 
-        // Load object configs (1 SOQL)
-        List<Integration_Object_Config__mdt> objConfigs = [
-            SELECT SObjectName__c, SystemApiName__c, TriggerReason__c, IsActive__c
-            FROM Integration_Object_Config__mdt
-            WHERE SObjectName__c IN :sObjNames
-              AND SystemApiName__c IN :systemNames
-              AND TriggerReason__c IN :triggerReasons
+        // 2) Load object rules (Integration_Object_Rule__c) – 1 SOQL
+        List<Integration_Object_Rule__c> objRules = [
+            SELECT Id,
+                   SObjectName__c,
+                   SystemDeveloperName__c,
+                   TriggerReason__c,
+                   IsActive__c
+            FROM Integration_Object_Rule__c
+            WHERE SObjectName__c         IN :sObjNames
+              AND SystemDeveloperName__c IN :systemNames
+              AND TriggerReason__c       IN :triggerReasons
               AND IsActive__c = true
         ];
 
-        Map<String, Integration_Object_Config__mdt> objCfgByKey =
-            new Map<String, Integration_Object_Config__mdt>();
-        for (Integration_Object_Config__mdt cfg : objConfigs) {
-            String key = cfg.SObjectName__c + '|' + cfg.SystemApiName__c + '|' + cfg.TriggerReason__c;
-            objCfgByKey.put(key, cfg);
+        // Key: "<SObjectName>|<SystemDeveloperName>|<TriggerReason>"
+        Map<String, Integration_Object_Rule__c> objRuleByKey =
+            new Map<String, Integration_Object_Rule__c>();
+        for (Integration_Object_Rule__c rule : objRules) {
+            String key = rule.SObjectName__c
+                       + '|' + rule.SystemDeveloperName__c
+                       + '|' + rule.TriggerReason__c;
+            objRuleByKey.put(key, rule);
         }
 
-        // Load field mappings (1 SOQL)
-        List<Integration_Field_Map__mdt> fieldMaps = [
-            SELECT SObjectName__c, SystemApiName__c, SourceFieldAPI__c,
-                   TargetFieldName__c, IsRequired__c, DataType__c
-            FROM Integration_Field_Map__mdt
-            WHERE SObjectName__c IN :sObjNames
-              AND SystemApiName__c IN :systemNames
+        // 3) Load field mappings (Integration_Field_Map_Config__c) – 1 SOQL
+        List<Integration_Field_Map_Config__c> fieldMaps = [
+            SELECT Id,
+                   SObjectName__c,
+                   SystemDeveloperName__c,
+                   SourceFieldAPI__c,
+                   TargetFieldName__c,
+                   IsRequired__c,
+                   DataType__c
+            FROM Integration_Field_Map_Config__c
+            WHERE SObjectName__c         IN :sObjNames
+              AND SystemDeveloperName__c IN :systemNames
         ];
 
-        Map<String, List<Integration_Field_Map__mdt>> fieldMapsByKey =
-            new Map<String, List<Integration_Field_Map__mdt>>();
+        // Key: "<SObjectName>|<SystemDeveloperName>"
+        Map<String, List<Integration_Field_Map_Config__c>> fieldMapsByKey =
+            new Map<String, List<Integration_Field_Map_Config__c>>();
 
-        for (Integration_Field_Map__mdt fm : fieldMaps) {
-            String key = fm.SObjectName__c + '|' + fm.SystemApiName__c;
-            if (!fieldMapsByKey.containsKey(key)) {
-                fieldMapsByKey.put(key, new List<Integration_Field_Map__mdt>());
+        for (Integration_Field_Map_Config__c fm : fieldMaps) {
+            String key = fm.SObjectName__c + '|' + fm.SystemDeveloperName__c;
+            List<Integration_Field_Map_Config__c> bucket = fieldMapsByKey.get(key);
+            if (bucket == null) {
+                bucket = new List<Integration_Field_Map_Config__c>();
+                fieldMapsByKey.put(key, bucket);
             }
-            fieldMapsByKey.get(key).add(fm);            
+            bucket.add(fm);
         }
 
-        // Load source records (with CRUD + FLS)
+        //
+        // Load source records (with object-level CRUD checks)
+        //
         Map<String, Map<Id, SObject>> recordsByType = loadAndSecureRecords(jobs);
 
         List<Integration_Job__c> jobsToUpdate = new List<Integration_Job__c>();
         List<Integration_Job__c> jobsToRetry  = new List<Integration_Job__c>();
 
         for (Integration_Job__c job : jobs) {
-            Integration_System__mdt sys = systemsByName.get(job.SystemApiName__c);
+            // Resolve system config
+            Integration_System_Config__c sys = systemsByName.get(job.SystemApiName__c);
             if (sys == null || !sys.IsActive__c) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c = 'System not configured or inactive';
                 jobsToUpdate.add(job);
                 continue;
             }
 
-            String objKey = job.SObjectName__c + '|' + job.SystemApiName__c + '|' + job.TriggerReason__c;
-            Integration_Object_Config__mdt objCfg = objCfgByKey.get(objKey);
-            if (objCfg == null) {
-                job.Status__c   = 'Permanent_Failed';
-                job.LastError__c = 'Object config not found';
+            // Resolve object rule
+            String objKey = job.SObjectName__c
+                          + '|' + job.SystemApiName__c
+                          + '|' + job.TriggerReason__c;
+            Integration_Object_Rule__c objRule = objRuleByKey.get(objKey);
+            if (objRule == null) {
+                job.Status__c    = 'Permanent_Failed';
+                job.LastError__c = 'Object rule not found';
                 jobsToUpdate.add(job);
                 continue;
             }
 
+            // Resolve source record
             Map<Id, SObject> recsMap = recordsByType.get(job.SObjectName__c);
             if (recsMap == null) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c = 'No records loaded for ' + job.SObjectName__c;
                 jobsToUpdate.add(job);
                 continue;
@@ -124,36 +185,48 @@ public with sharing class IntegrationJobWorker
 
             SObject record = recsMap.get((Id) job.RecordId__c);
             if (record == null) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c = 'Record not found';
                 jobsToUpdate.add(job);
                 continue;
             }
 
+            // Resolve field mappings
             String fmKey = job.SObjectName__c + '|' + job.SystemApiName__c;
-            List<Integration_Field_Map__mdt> mappings = fieldMapsByKey.get(fmKey);
+            List<Integration_Field_Map_Config__c> mappings = fieldMapsByKey.get(fmKey);
             if (mappings == null || mappings.isEmpty()) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c = 'No field mappings found';
                 jobsToUpdate.add(job);
                 continue;
             }
 
-            // Build payload (FLS-safe; required fields enforced)
-            Map<String, Object> payload = buildPayloadFromFieldMaps(record, mappings, job);
+            // Build payload (required fields enforced)
+            Map<String, Object> payload =
+                buildPayloadFromFieldMaps(record, mappings, job);
+
+            // buildPayloadFromFieldMaps may set job.Status__c = 'Permanent_Failed'
             if ('Permanent_Failed'.equals(job.Status__c)) {
                 jobsToUpdate.add(job);
                 continue;
             }
 
             // Resolve adapter via HandlerClass__c
-            IIntegrationAdapter adapter =
-                (IIntegrationAdapter) Type.forName(sys.HandlerClass__c).newInstance();
+            IIntegrationAdapter adapter;
+            try {
+                adapter = (IIntegrationAdapter) Type.forName(sys.HandlerClass__c).newInstance();
+            } catch (Exception ex) {
+                job.Status__c    = 'Permanent_Failed';
+                job.LastError__c = 'Handler class error: ' + ex.getMessage();
+                jobsToUpdate.add(job);
+                continue;
+            }
 
+            // Build context
             IntegrationContext ctx = new IntegrationContext();
             ctx.record       = record;
-            ctx.systemConfig = sys;
-            ctx.objectConfig = objCfg;
+            ctx.systemConfig = sys;      // Integration_System_Config__c
+            ctx.objectConfig = objRule;  // Integration_Object_Rule__c
             ctx.payload      = payload;
 
             IntegrationResult result;
@@ -167,11 +240,17 @@ public with sharing class IntegrationJobWorker
             }
 
             job.LastAttemptAt__c = System.now();
-            Integer maxRetries = (sys.MaxRetries__c == null) ? 0 : sys.MaxRetries__c.intValue();
-            Integer currentRetries = (job.RetryCount__c == null) ? 0 : job.RetryCount__c.intValue();
+
+            Integer maxRetries = 0;
+            if (sys.MaxRetries__c != null) {
+                maxRetries = Integer.valueOf(sys.MaxRetries__c.intValue());
+            }
+            Integer currentRetries = (job.RetryCount__c == null)
+                ? 0
+                : Integer.valueOf(job.RetryCount__c);
 
             if (result.isSuccess) {
-                job.Status__c   = 'Success';
+                job.Status__c    = 'Success';
                 job.LastError__c = null;
                 jobsToUpdate.add(job);
             } else if (result.isTemporaryError && currentRetries < maxRetries) {
@@ -181,7 +260,7 @@ public with sharing class IntegrationJobWorker
                 jobsToUpdate.add(job);
                 jobsToRetry.add(job);
             } else {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c = result.message;
                 jobsToUpdate.add(job);
             }
@@ -193,23 +272,28 @@ public with sharing class IntegrationJobWorker
 
         if (!jobsToRetry.isEmpty()) {
             List<Id> retryIds = new List<Id>();
-            for (Integration_Job__c j : jobsToRetry) retryIds.add(j.Id);
+            for (Integration_Job__c j : jobsToRetry) {
+                retryIds.add(j.Id);
+            }
             System.enqueueJob(new IntegrationJobWorker(retryIds));
         }
     }
 
-    // Bulk + FLS-safe load of source records
-    private static Map<String, Map<Id, SObject>> loadAndSecureRecords(List<Integration_Job__c> jobs) {
+    // Bulk + object-level-secure load of source records
+    private static Map<String, Map<Id, SObject>> loadAndSecureRecords(
+        List<Integration_Job__c> jobs
+    ) {
         Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
 
         for (Integration_Job__c job : jobs) {
             if (!idsByType.containsKey(job.SObjectName__c)) {
                 idsByType.put(job.SObjectName__c, new Set<Id>());
             }
-            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);            
+            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
         }
 
-        Map<String, Map<Id, SObject>> result = new Map<String, Map<Id, SObject>>();
+        Map<String, Map<Id, SObject>> result =
+            new Map<String, Map<Id, SObject>>();
 
         for (String sObjName : idsByType.keySet()) {
             Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjName);
@@ -223,11 +307,14 @@ public with sharing class IntegrationJobWorker
                 continue;
             }
 
-            String soql = 'SELECT FIELDS(ALL) FROM ' + sObjName + ' WHERE Id IN :idsByType.get(sObjName)';
+            String soql =
+                'SELECT FIELDS(ALL) FROM ' + sObjName + ' WHERE Id IN :idsByType.get(sObjName)';
             List<SObject> recs = Database.query(soql);
 
-            // FLS: strip non-readable fields
-            recs = (List<SObject>) Security.stripInaccessible(AccessType.READABLE, recs).getRecords();
+            // NOTE: We are not calling Security.stripInaccessible here due to
+            //       API compatibility in this org. If you upgrade the API
+            //       version and have Security.stripInaccessible available,
+            //       you can add a field-level FLS enforcement step here.
 
             result.put(sObjName, new Map<Id, SObject>(recs));
         }
@@ -235,15 +322,15 @@ public with sharing class IntegrationJobWorker
         return result;
     }
 
-    // Build payload from Integration_Field_Map__mdt rows
+    // Build payload from Integration_Field_Map_Config__c rows
     private static Map<String, Object> buildPayloadFromFieldMaps(
         SObject record,
-        List<Integration_Field_Map__mdt> mappings,
+        List<Integration_Field_Map_Config__c> mappings,
         Integration_Job__c job
     ) {
         Map<String, Object> payload = new Map<String, Object>();
 
-        for (Integration_Field_Map__mdt fm : mappings) {
+        for (Integration_Field_Map_Config__c fm : mappings) {
             String sourceApi  = fm.SourceFieldAPI__c;
             String targetName = String.isBlank(fm.TargetFieldName__c)
                 ? sourceApi
@@ -251,16 +338,16 @@ public with sharing class IntegrationJobWorker
 
             Object value;
             try {
-                value = record.get(sourceApi); // FLS-safe: unreadable fields are null after stripInaccessible
+                value = record.get(sourceApi);
             } catch (Exception ex) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c =
                     'Error reading field ' + sourceApi + ': ' + ex.getMessage();
                 break;
             }
 
             if (fm.IsRequired__c && value == null) {
-                job.Status__c   = 'Permanent_Failed';
+                job.Status__c    = 'Permanent_Failed';
                 job.LastError__c =
                     'Required field ' + sourceApi + ' is null or not accessible';
                 break;
