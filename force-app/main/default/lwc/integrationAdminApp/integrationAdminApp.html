@@ -1,16 +1,3 @@
-<!-- integrationAdminApp.html
-     Purpose:
-      - Provide a clean, tabbed "Integration Admin Console" UI.
-      - Eye-catching: button group as tabs, SLDS tables, clear sections.
-      - Tabs:
-          * Systems: manage Integration_System__mdt
-          * Object Mappings: manage Integration_Object_Config__mdt
-          * Field Mappings: manage Integration_Field_Map__mdt
-     Notes:
-      - Uses stable rowId property for <tr key=""> to satisfy LWC requirements.
-      - Tab button variants are bound to getters (no ternary in markup).
--->
-
 <template>
     <lightning-card title="Integration Admin Console" icon-name="utility:connected_apps">
         <!-- Tab Selector -->
@@ -67,24 +54,26 @@
                     <tbody>
                         <template for:each={systems} for:item="sys" for:index="index">
                             <tr key={sys.developerName}>
-                                <td>{sys.label}</td>
+                                <td>{sys.developerName}</td>
                                 <td>
-                                    <lightning-input type="toggle"
-                                                     message-toggle-active="On"
-                                                     message-toggle-inactive="Off"
-                                                     data-index={index}
-                                                     data-field="isActive"
-                                                     checked={sys.isActive}
-                                                     onchange={handleSystemChange}>
+                                    <lightning-input
+                                        type="toggle"
+                                        message-toggle-active="On"
+                                        message-toggle-inactive="Off"
+                                        data-index={index}
+                                        data-field="isActive"
+                                        checked={sys.isActive}
+                                        onchange={handleSystemChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
-                                    <lightning-input type="number"
-                                                     variant="label-hidden"
-                                                     data-index={index}
-                                                     data-field="maxRetries"
-                                                     value={sys.maxRetries}
-                                                     onchange={handleSystemChange}>
+                                    <lightning-input
+                                        type="number"
+                                        variant="label-hidden"
+                                        data-index={index}
+                                        data-field="maxRetries"
+                                        value={sys.maxRetries}
+                                        onchange={handleSystemChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
@@ -96,17 +85,17 @@
                 </table>
 
                 <div class="slds-m-top_small slds-text-align_right">
-                    <lightning-button variant="brand"
-                                      label="Save Systems"
-                                      onclick={handleSaveSystems}
-                                      icon-name="utility:save">
+                    <lightning-button
+                        variant="brand"
+                        label="Save Systems"
+                        onclick={handleSaveSystems}
+                        icon-name="utility:save">
                     </lightning-button>
                 </div>
             </div>
         </template>
 
         <!-- ===================== OBJECT MAPPINGS TAB ===================== -->
-        <!-- Uses comboboxes for SObject and System (driven by CMDT) and rowId as key -->
         <template if:true={showMappingsTab}>
             <div class="slds-p-around_small">
                 <div class="slds-grid slds-wrap slds-m-bottom_small">
@@ -117,10 +106,11 @@
                         </p>
                     </div>
                     <div class="slds-col slds-size_1-of-2 slds-text-align_right">
-                        <lightning-button label="Add Mapping"
-                                          icon-name="utility:add"
-                                          variant="neutral"
-                                          onclick={addObjectConfig}>
+                        <lightning-button
+                            label="Add Mapping"
+                            icon-name="utility:add"
+                            variant="neutral"
+                            onclick={addObjectConfig}>
                         </lightning-button>
                     </div>
                 </div>
@@ -139,7 +129,6 @@
                         <template for:each={objectConfigs} for:item="cfg" for:index="index">
                             <tr key={cfg.rowId}>
                                 <td>
-                                    <!-- SObject combobox (driven by Integration_Enabled_Object__mdt) -->
                                     <lightning-combobox
                                         data-index={index}
                                         data-field="sObjectName"
@@ -149,7 +138,6 @@
                                     </lightning-combobox>
                                 </td>
                                 <td>
-                                    <!-- System combobox (driven by Integration_System__mdt) -->
                                     <lightning-combobox
                                         data-index={index}
                                         data-field="systemApiName"
@@ -159,27 +147,30 @@
                                     </lightning-combobox>
                                 </td>
                                 <td>
-                                    <lightning-input type="text"
-                                                     variant="label-hidden"
-                                                     data-index={index}
-                                                     data-field="triggerReason"
-                                                     value={cfg.triggerReason}
-                                                     onchange={handleObjectConfigChange}>
+                                    <lightning-input
+                                        type="text"
+                                        variant="label-hidden"
+                                        data-index={index}
+                                        data-field="triggerReason"
+                                        value={cfg.triggerReason}
+                                        onchange={handleObjectConfigChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
-                                    <lightning-input type="checkbox"
-                                                     data-index={index}
-                                                     data-field="isActive"
-                                                     checked={cfg.isActive}
-                                                     onchange={handleObjectConfigChange}>
+                                    <lightning-input
+                                        type="checkbox"
+                                        data-index={index}
+                                        data-field="isActive"
+                                        checked={cfg.isActive}
+                                        onchange={handleObjectConfigChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
-                                    <lightning-button label="Edit Fields"
-                                                      icon-name="utility:edit"
-                                                      data-index={index}
-                                                      onclick={handleEditFields}>
+                                    <lightning-button
+                                        label="Edit Fields"
+                                        icon-name="utility:edit"
+                                        data-index={index}
+                                        onclick={handleEditFields}>
                                     </lightning-button>
                                 </td>
                             </tr>
@@ -188,10 +179,11 @@
                 </table>
 
                 <div class="slds-m-top_small slds-text-align_right">
-                    <lightning-button variant="brand"
-                                      label="Save Mappings"
-                                      onclick={handleSaveObjectConfigs}
-                                      icon-name="utility:save">
+                    <lightning-button
+                        variant="brand"
+                        label="Save Mappings"
+                        onclick={handleSaveObjectConfigs}
+                        icon-name="utility:save">
                     </lightning-button>
                 </div>
             </div>
@@ -200,18 +192,39 @@
         <!-- ===================== FIELD MAPPINGS TAB ===================== -->
         <template if:true={showFieldsTab}>
             <div class="slds-p-around_small">
-                <h2 class="slds-text-heading_small">
+                <h2 class="slds-text-heading_small slds-m-bottom_x-small">
                     Field Mappings
                 </h2>
-                <p class="slds-text-color_weak slds-m-bottom_small">
-                    Define which fields from {selectedSObjectName} are sent to {selectedSystemApiName} and how they are named.
-                </p>
+
+                <!-- Context: which Object + System -->
+                <div class="slds-m-bottom_small slds-grid slds-wrap slds-border_bottom slds-p-bottom_x-small">
+                    <div class="slds-col slds-size_1-of-2">
+                        <p class="slds-text-color_weak">
+                            Configure which fields from the selected object are sent to the selected system.
+                        </p>
+                    </div>
+                    <div class="slds-col slds-size_1-of-2 slds-text-align_right">
+                        <template if:true={selectedSObjectName}>
+                            <lightning-pill label={selectedSObjectName} variant="standard"></lightning-pill>
+                        </template>
+                        <template if:true={selectedSystemApiName}>
+                            <lightning-pill label={selectedSystemApiName} variant="standard"></lightning-pill>
+                        </template>
+                        <template if:false={selectedSObjectName}>
+                            <span class="slds-text-color_error slds-m-left_small">
+                                Select a mapping (Edit Fields) from the Object Mappings tab.
+                            </span>
+                        </template>
+                    </div>
+                </div>
 
                 <div class="slds-m-bottom_small slds-text-align_right">
-                    <lightning-button label="Add Field Mapping"
-                                      icon-name="utility:add"
-                                      variant="neutral"
-                                      onclick={addFieldMapping}>
+                    <lightning-button
+                        label="Add Field Mapping"
+                        icon-name="utility:add"
+                        variant="neutral"
+                        disabled={isAddFieldDisabled}
+                        onclick={addFieldMapping}>
                     </lightning-button>
                 </div>
 
@@ -237,29 +250,32 @@
                                     </lightning-combobox>
                                 </td>
                                 <td>
-                                    <lightning-input type="text"
-                                                     variant="label-hidden"
-                                                     data-index={index}
-                                                     data-field="targetFieldName"
-                                                     value={fm.targetFieldName}
-                                                     onchange={handleFieldMappingChange}>
+                                    <lightning-input
+                                        type="text"
+                                        variant="label-hidden"
+                                        data-index={index}
+                                        data-field="targetFieldName"
+                                        value={fm.targetFieldName}
+                                        onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
-                                    <lightning-input type="checkbox"
-                                                     data-index={index}
-                                                     data-field="isRequired"
-                                                     checked={fm.isRequired}
-                                                     onchange={handleFieldMappingChange}>
+                                    <lightning-input
+                                        type="checkbox"
+                                        data-index={index}
+                                        data-field="isRequired"
+                                        checked={fm.isRequired}
+                                        onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
                                 <td>
-                                    <lightning-input type="text"
-                                                     variant="label-hidden"
-                                                     data-index={index}
-                                                     data-field="dataType"
-                                                     value={fm.dataType}
-                                                     onchange={handleFieldMappingChange}>
+                                    <lightning-input
+                                        type="text"
+                                        variant="label-hidden"
+                                        data-index={index}
+                                        data-field="dataType"
+                                        value={fm.dataType}
+                                        onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
                             </tr>
@@ -268,10 +284,11 @@
                 </table>
 
                 <div class="slds-m-top_small slds-text-align_right">
-                    <lightning-button variant="brand"
-                                      label="Save Field Mappings"
-                                      icon-name="utility:save"
-                                      onclick={handleSaveFieldMappings}>
+                    <lightning-button
+                        variant="brand"
+                        label="Save Field Mappings"
+                        icon-name="utility:save"
+                        onclick={handleSaveFieldMappings}>
                     </lightning-button>
                 </div>
             </div>
