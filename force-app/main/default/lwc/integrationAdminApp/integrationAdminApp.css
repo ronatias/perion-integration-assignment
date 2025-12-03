@@ -1,0 +1,29 @@
+/* Slightly tighten vertical padding in all data cells */
+.slds-table td {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+}
+
+/* Nudge lightning-inputs / checkboxes down so they visually align
+   with lightning-combobox in their row. Tweak margin-top if needed. */
+.trigger-cell lightning-input,
+.active-cell lightning-input,
+.target-cell lightning-input,
+.required-cell lightning-input,
+.datatype-cell lightning-input {
+    display: block;
+    margin-top: 0.5rem;
+}
+
+/* Push Edit Fields button slightly downward to align with inputs */
+.fields-button-cell lightning-button {
+    margin-top: 0.5rem;  
+    display: block;
+}
+
+/* Align combobox vertically with inline inputs */
+.align-combobox lightning-combobox,
+.align-combobox .slds-combobox_container {
+    margin-top: -1rem; /* adjust between -0.2 and -0.45 until pixel-perfect */
+}
+

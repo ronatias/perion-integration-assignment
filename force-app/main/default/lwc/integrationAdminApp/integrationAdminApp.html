@@ -42,6 +42,7 @@
                 <h2 class="slds-text-heading_small slds-m-bottom_small">
                     External Systems
                 </h2>
+
                 <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped">
                     <thead>
                         <tr class="slds-line-height_reset">
@@ -98,6 +99,7 @@
         <!-- ===================== OBJECT MAPPINGS TAB ===================== -->
         <template if:true={showMappingsTab}>
             <div class="slds-p-around_small">
+
                 <div class="slds-grid slds-wrap slds-m-bottom_small">
                     <div class="slds-col slds-size_1-of-2">
                         <h2 class="slds-text-heading_small">Object → System Mappings</h2>
@@ -128,7 +130,9 @@
                     <tbody>
                         <template for:each={objectConfigs} for:item="cfg" for:index="index">
                             <tr key={cfg.rowId}>
-                                <td>
+
+                                <!-- SObject (combobox) -->
+                                <td class="align-combobox">
                                     <lightning-combobox
                                         data-index={index}
                                         data-field="sObjectName"
@@ -137,7 +141,9 @@
                                         onchange={handleObjectConfigChange}>
                                     </lightning-combobox>
                                 </td>
-                                <td>
+
+                                <!-- System (combobox) -->
+                                <td class="align-combobox">
                                     <lightning-combobox
                                         data-index={index}
                                         data-field="systemApiName"
@@ -146,7 +152,9 @@
                                         onchange={handleObjectConfigChange}>
                                     </lightning-combobox>
                                 </td>
-                                <td>
+
+                                <!-- Trigger Reason (text input) -->
+                                <td class="trigger-cell">
                                     <lightning-input
                                         type="text"
                                         variant="label-hidden"
@@ -156,7 +164,9 @@
                                         onchange={handleObjectConfigChange}>
                                     </lightning-input>
                                 </td>
-                                <td>
+
+                                <!-- Active (checkbox) -->
+                                <td class="active-cell slds-text-align_center">
                                     <lightning-input
                                         type="checkbox"
                                         data-index={index}
@@ -165,7 +175,9 @@
                                         onchange={handleObjectConfigChange}>
                                     </lightning-input>
                                 </td>
-                                <td>
+
+                                <!-- Edit Fields -->
+                                <td class="fields-button-cell">
                                     <lightning-button
                                         label="Edit Fields"
                                         icon-name="utility:edit"
@@ -173,6 +185,7 @@
                                         onclick={handleEditFields}>
                                     </lightning-button>
                                 </td>
+
                             </tr>
                         </template>
                     </tbody>
@@ -196,7 +209,7 @@
                     Field Mappings
                 </h2>
 
-                <!-- Context: which Object + System -->
+                <!-- Context -->
                 <div class="slds-m-bottom_small slds-grid slds-wrap slds-border_bottom slds-p-bottom_x-small">
                     <div class="slds-col slds-size_1-of-2">
                         <p class="slds-text-color_weak">
@@ -237,10 +250,13 @@
                             <th scope="col">Data Type</th>
                         </tr>
                     </thead>
+
                     <tbody>
                         <template for:each={fieldMappings} for:item="fm" for:index="index">
                             <tr key={fm.rowId}>
-                                <td>
+
+                                <!-- Source Field (combobox) -->
+                                <td class="align-combobox">
                                     <lightning-combobox
                                         data-index={index}
                                         data-field="sourceFieldAPI"
@@ -249,7 +265,9 @@
                                         onchange={handleFieldMappingChange}>
                                     </lightning-combobox>
                                 </td>
-                                <td>
+
+                                <!-- Target Name (text input) -->
+                                <td class="target-cell">
                                     <lightning-input
                                         type="text"
                                         variant="label-hidden"
@@ -259,7 +277,9 @@
                                         onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
-                                <td>
+
+                                <!-- Required (checkbox) -->
+                                <td class="required-cell slds-text-align_center">
                                     <lightning-input
                                         type="checkbox"
                                         data-index={index}
@@ -268,7 +288,9 @@
                                         onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
-                                <td>
+
+                                <!-- Data Type (text input) -->
+                                <td class="datatype-cell">
                                     <lightning-input
                                         type="text"
                                         variant="label-hidden"
@@ -278,9 +300,11 @@
                                         onchange={handleFieldMappingChange}>
                                     </lightning-input>
                                 </td>
+
                             </tr>
                         </template>
                     </tbody>
+
                 </table>
 
                 <div class="slds-m-top_small slds-text-align_right">
@@ -291,7 +315,9 @@
                         onclick={handleSaveFieldMappings}>
                     </lightning-button>
                 </div>
+
             </div>
         </template>
+
     </lightning-card>
 </template>
