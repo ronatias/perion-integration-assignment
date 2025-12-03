@@ -71,99 +71,105 @@ public with sharing class IntegrationAdminController {
 
     @AuraEnabled
     public static void saveSystems(List<Object> systems) {
-        System.debug('=== [saveSystems] START ===');
-        System.debug('=== incoming raw size = ' + (systems == null ? 0 : systems.size()));
-
         if (systems == null || systems.isEmpty()) {
-            System.debug('=== [saveSystems] EXIT: no systems received ===');
             return;
         }
-
-        // LWC actually passes DTO instances; normalize to pure JSON structure.
-        List<Object> normalized =
-            (List<Object>) JSON.deserializeUntyped(JSON.serialize(systems));
-
-        System.debug('=== [saveSystems] normalized size = ' + normalized.size());
-
-        // Existing systems keyed by DeveloperName__c
+    
+        // Load existing systems keyed by DeveloperName__c
         Map<String, Integration_System_Config__c> byDevName =
             new Map<String, Integration_System_Config__c>();
-
+    
         for (Integration_System_Config__c sys : [
             SELECT Id, DeveloperName__c, IsActive__c, MaxRetries__c, HandlerClass__c
             FROM Integration_System_Config__c
         ]) {
             if (!String.isBlank(sys.DeveloperName__c)) {
                 byDevName.put(sys.DeveloperName__c, sys);
-                System.debug('Loaded existing sys: devName=' + sys.DeveloperName__c + ' → Id=' + sys.Id);
             }
         }
-
+    
         List<Integration_System_Config__c> toInsert = new List<Integration_System_Config__c>();
         List<Integration_System_Config__c> toUpdate = new List<Integration_System_Config__c>();
-
-        Integer idx = 0;
-        for (Object raw : normalized) {
-            Map<String, Object> row = (Map<String, Object>) raw;
-
-            String devName   = (String)  row.get('developerName');
-            Boolean isActive = (Boolean) row.get('isActive');
-            Object maxRetRaw = row.get('maxRetries');
-
-            Integer maxRetries = null;
-            if (maxRetRaw != null) {
-                maxRetries = ((Decimal) maxRetRaw).intValue(); // JS number → Decimal → Integer
-            }
-
-            System.debug(
-                '[saveSystems] ROW ' + idx++ +
-                ' | devName=' + devName +
-                ' | isActive=' + isActive +
-                ' | maxRetries=' + maxRetries
-            );
-
-            if (String.isBlank(devName)) {
-                System.debug('[saveSystems] SKIP: row with EMPTY developerName');
+    
+        for (Object rowObj : systems) {
+            if (!(rowObj instanceof Map<String, Object>)) {
                 continue;
             }
-
+    
+            Map<String, Object> row = (Map<String, Object>) rowObj;
+    
+            String devName = (String) row.get('developerName');
+    
+            if (String.isBlank(devName)) {
+                continue;
+            }
+    
+            // --- TOLERANT BOOLEAN PARSE (isActive) ---
+            Boolean isActive;
+            Object isActiveVal = row.get('isActive');
+            if (isActiveVal instanceof Boolean) {
+                isActive = (Boolean) isActiveVal;
+            } else if (isActiveVal instanceof String) {
+                String s = ((String) isActiveVal).trim();
+                if (!String.isBlank(s)) {
+                    isActive = 'true'.equalsIgnoreCase(s);
+                }
+            }
+    
+            // --- TOLERANT INTEGER PARSE (maxRetries) ---
+            Integer maxRetries;
+            Object mrVal = row.get('maxRetries');
+            if (mrVal instanceof Integer) {
+                maxRetries = (Integer) mrVal;
+            } else if (mrVal instanceof Long) {
+                maxRetries = Integer.valueOf((Long) mrVal);
+            } else if (mrVal instanceof Decimal) {
+                maxRetries = ((Decimal) mrVal).intValue();
+            } else if (mrVal instanceof String) {
+                String s = ((String) mrVal).trim();
+                if (!String.isBlank(s)) {
+                    try {
+                        maxRetries = Integer.valueOf(s);
+                    } catch (Exception e) {
+                        System.debug('saveSystems – cannot parse maxRetries from String: ' + s);
+                    }
+                }
+            }
+    
+            // Existing or new row
             Integration_System_Config__c sys = byDevName.get(devName);
             Boolean isNew = (sys == null);
-
-            System.debug(
-                '[saveSystems] Processing devName=' + devName +
-                ' | Exists? ' + (isNew ? 'NO → INSERT' : 'YES → UPDATE Id=' + sys.Id)
-            );
-
+    
             if (isNew) {
                 sys = new Integration_System_Config__c();
                 sys.DeveloperName__c = devName;
             }
-
-            sys.IsActive__c   = isActive;
-            sys.MaxRetries__c = maxRetries;
-
+    
+            if (isActive != null) {
+                sys.IsActive__c = isActive;
+            }
+            if (maxRetries != null) {
+                sys.MaxRetries__c = maxRetries;
+            }
+    
+            // IMPORTANT: HandlerClass__c is intentionally NOT updated from the UI
+            // to keep it effectively read-only for admins.
+            // sys.HandlerClass__c = ...  // <- we do NOT touch this.
+    
             if (isNew) {
                 toInsert.add(sys);
             } else {
                 toUpdate.add(sys);
             }
         }
-
-        System.debug('[saveSystems] toInsert size = ' + toInsert.size());
-        System.debug('[saveSystems] toUpdate size = ' + toUpdate.size());
-
+    
         if (!toInsert.isEmpty()) {
             insert toInsert;
-            System.debug('[saveSystems] INSERT SUCCESS');
         }
         if (!toUpdate.isEmpty()) {
             update toUpdate;
-            System.debug('[saveSystems] UPDATE SUCCESS');
         }
-
-        System.debug('=== [saveSystems] END ===');
-    }
+    }    
 
     // =========================================================
     // OBJECT RULES  (Integration_Object_Rule__c)
