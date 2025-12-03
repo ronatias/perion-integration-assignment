@@ -280,47 +280,56 @@ public with sharing class IntegrationJobWorker
     }
 
     // Bulk + object-level-secure load of source records
-    private static Map<String, Map<Id, SObject>> loadAndSecureRecords(
-        List<Integration_Job__c> jobs
-    ) {
-        Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
+private static Map<String, Map<Id, SObject>> loadAndSecureRecords(
+    List<Integration_Job__c> jobs
+) {
+    Map<String, Set<Id>> idsByType = new Map<String, Set<Id>>();
 
-        for (Integration_Job__c job : jobs) {
-            if (!idsByType.containsKey(job.SObjectName__c)) {
-                idsByType.put(job.SObjectName__c, new Set<Id>());
-            }
-            idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
+    for (Integration_Job__c job : jobs) {
+        if (!idsByType.containsKey(job.SObjectName__c)) {
+            idsByType.put(job.SObjectName__c, new Set<Id>());
         }
-
-        Map<String, Map<Id, SObject>> result =
-            new Map<String, Map<Id, SObject>>();
-
-        for (String sObjName : idsByType.keySet()) {
-            Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjName);
-            if (sType == null) continue;
-
-            Schema.DescribeSObjectResult d = sType.getDescribe();
-
-            // CRUD: object-level access
-            if (!d.isAccessible()) {
-                // Jobs for this type will be marked as failed later.
-                continue;
-            }
-
-            String soql =
-                'SELECT FIELDS(ALL) FROM ' + sObjName + ' WHERE Id IN :idsByType.get(sObjName)';
-            List<SObject> recs = Database.query(soql);
-
-            // NOTE: We are not calling Security.stripInaccessible here due to
-            //       API compatibility in this org. If you upgrade the API
-            //       version and have Security.stripInaccessible available,
-            //       you can add a field-level FLS enforcement step here.
-
-            result.put(sObjName, new Map<Id, SObject>(recs));
-        }
-
-        return result;
+        idsByType.get(job.SObjectName__c).add((Id) job.RecordId__c);
     }
+
+    Map<String, Map<Id, SObject>> result =
+        new Map<String, Map<Id, SObject>>();
+
+    for (String sObjName : idsByType.keySet()) {
+        Schema.SObjectType sType = Schema.getGlobalDescribe().get(sObjName);
+        if (sType == null) continue;
+
+        Schema.DescribeSObjectResult d = sType.getDescribe();
+
+        // CRUD: object-level access
+        if (!d.isAccessible()) {
+            // Jobs for this type will be marked as failed later.
+            continue;
+        }
+
+        // IMPORTANT FIX:
+        //  - We must bind a local variable (ids) in the dynamic SOQL.
+        //  - Apex does NOT allow "Id IN :idsByType.get(sObjName)" inside the string.
+        Set<Id> ids = idsByType.get(sObjName);
+        if (ids == null || ids.isEmpty()) {
+            continue;
+        }
+
+        String soql =
+            'SELECT FIELDS(ALL) FROM ' + sObjName + ' WHERE Id IN :ids';
+
+        List<SObject> recs = Database.query(soql);
+
+        // NOTE: We are not calling Security.stripInaccessible here due to
+        //       API compatibility in this org. If you upgrade the API
+        //       version and have Security.stripInaccessible available,
+        //       you can add a field-level FLS enforcement step here.
+
+        result.put(sObjName, new Map<Id, SObject>(recs));
+    }
+
+    return result;
+}
 
     // Build payload from Integration_Field_Map_Config__c rows
     private static Map<String, Object> buildPayloadFromFieldMaps(
