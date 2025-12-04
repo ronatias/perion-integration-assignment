@@ -1,4 +1,3 @@
-// BillingAdapterRealWorldExample.cls
 // Purpose (REAL-LIFE TEMPLATE):
 //  - Show how a real Billing integration adapter could look.
 //  - Uses an HTTP callout to a Billing system via Named Credential.
@@ -6,8 +5,8 @@
 //      * Success
 //      * Temporary errors  (retryable)
 //      * Permanent errors  (non-retryable)
-//  - This class is NOT wired to your config yet; it's a reference for real-time usage.
-//    To activate it in your framework, set Integration_System_Config__c.HandlerClass__c
+//  - This class is NOT wired to any config yet; it's a reference for real-time usage (for assigment solution).
+//    To activate it - set Integration_System_Config__c.HandlerClass__c
 //    to 'BillingAdapterRealWorldExample' for the BILLING system.
 //
 // Assumptions:
@@ -20,12 +19,10 @@
 //      errorCode: '...'
 //      message: '...'
 //
-// NOTE: This is a template; adjust endpoint paths, headers, and JSON contract
-//       to match your real Billing provider.
 
 public with sharing class BillingAdapterRealWorldExample implements IIntegrationAdapter {
 
-    // Optional: constants to avoid string literals everywhere
+    // Constants to avoid string literals everywhere
     private static final String NAMED_CREDENTIAL = 'callout:Billing_API';
     private static final String INVOICE_ENDPOINT = '/invoices'; // e.g. POST /invoices
 
@@ -71,18 +68,14 @@ public with sharing class BillingAdapterRealWorldExample implements IIntegration
         String endpoint = NAMED_CREDENTIAL + INVOICE_ENDPOINT;
         req.setEndpoint(endpoint);
         req.setMethod('POST');
-        req.setTimeout(15000); // 15s, adjust to your SLA
+        req.setTimeout(15000); // now 15s, adjust according to SLA
 
         // Standard headers for JSON API
         req.setHeader('Content-Type', 'application/json');
         req.setHeader('Accept', 'application/json');
 
-        // Optional: custom headers like correlation IDs, tenant, etc.
-        // req.setHeader('X-Correlation-Id', String.valueOf(ctx.record.Id));
-        // req.setHeader('X-Tenant-Id', ctx.systemConfig.SomeTenantField__c);
-
         // Body: serialize the prepared payload map.
-        // ctx.payload already respects your Integration_Field_Map_Config__c mappings.
+        // ctx.payload already respects Integration_Field_Map_Config__c mappings.
         String bodyJson = JSON.serialize(ctx.payload);
         req.setBody(bodyJson);
 
@@ -92,9 +85,7 @@ public with sharing class BillingAdapterRealWorldExample implements IIntegration
         return req;
     }
 
-    //
     // Translate HttpResponse into IntegrationResult (success/temp/permanent)
-    //
     private IntegrationResult handleResponse(HttpResponse res) {
         Integer statusCode = res.getStatusCode();
         String body        = res.getBody();
@@ -141,7 +132,7 @@ public with sharing class BillingAdapterRealWorldExample implements IIntegration
         // Examples:
         //  - 400 / 422 → business validation (amount too large, invalid VAT)
         //  - 401 / 403 → misconfiguration of auth/permissions
-        //  - 404       → endpoint/tenant misconfig, but in many orgs we treat it as permanent
+        //  - 404       → endpoint/tenant misconfig
         if (statusCode >= 400 && statusCode < 500) {
             // If the API distinguishes BUSINESS vs SYSTEM errors, we can treat SYSTEM as temp.
             if ('SYSTEM'.equalsIgnoreCase(errorType)) {

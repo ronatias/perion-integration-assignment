@@ -3,20 +3,20 @@ private class DocAdapterTest {
 
     @IsTest
     static void testSend_firstAttempt_tempFailure() {
-        // Arrange
+        // Arrange – simulate first delivery attempt where adapter is expected to return a retryable failure
         DocAdapter adapter = new DocAdapter();
 
         IntegrationContext ctx = new IntegrationContext();
-        ctx.attemptNumber = 0;
+        ctx.attemptNumber = 0;   // First attempt → temp error according to adapter logic
         ctx.payload = new Map<String, Object>{
             'fileId' => '123',
             'name'   => 'TestDoc.pdf'
         };
 
-        // Act
+        // Act – execute adapter behavior for first attempt
         IntegrationResult result = adapter.send(ctx);
 
-        // Assert
+        // Assert – validate temp-failure classification
         System.assertNotEquals(null, result, 'Result should not be null');
         System.assertEquals(false, result.isSuccess, 'Should not be success on attempt 0');
         System.assertEquals(true, result.isTemporaryError,
@@ -32,20 +32,20 @@ private class DocAdapterTest {
 
     @IsTest
     static void testSend_secondAttempt_permanentFailure() {
-        // Arrange
+        // Arrange – simulate subsequent attempt, where the adapter switches to permanent failures
         DocAdapter adapter = new DocAdapter();
 
         IntegrationContext ctx = new IntegrationContext();
-        ctx.attemptNumber = 2;
+        ctx.attemptNumber = 2;   // Any retry > 0 → permanent failure path
         ctx.payload = new Map<String, Object>{
             'fileId' => '987',
             'name'   => 'FinalDoc.pdf'
         };
 
-        // Act
+        // Act – evaluate behavior when adapter escalates to permanent error
         IntegrationResult result = adapter.send(ctx);
 
-        // Assert
+        // Assert – validate non-retryable (permanent) classification
         System.assertEquals(false, result.isSuccess,
             'Permanent failure should not be success'
         );

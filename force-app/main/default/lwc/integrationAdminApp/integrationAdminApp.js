@@ -26,6 +26,8 @@ import getIntegratableObjects from '@salesforce/apex/IntegrationAdminController.
 
 export default class IntegrationAdminApp extends LightningElement {
     // --- STATE: DATA ---
+    // Arrays below are the single source of truth for the UI;
+    // Apex receives these arrays as payloads on explicit Save.
 
     @track systems = [];          // List<SystemConfigDTO>
     @track systemOptions = [];    // [{label, value}] for System comboboxes
@@ -37,15 +39,17 @@ export default class IntegrationAdminApp extends LightningElement {
 
     @track sObjectOptions = [];   // [{label, value}] from getIntegratableObjects
     @track selectedSObjectName;   // Context for Field Mappings tab
-    @track selectedSystemApiName;
+    @track selectedSystemApiName; // Context for Field Mappings tab
 
     // --- STATE: UI ---
 
     @track activeTab = 'systems'; // 'systems' | 'mappings' | 'fields'
-    @track isLoading = false;
-    @track errorMessage;
+    @track isLoading = false;     // Simple page-level spinner flag
+    @track errorMessage;          // Single error banner at top
 
     // --- WIRES ---
+    // Initial data load for all tabs. Results are copied to @track arrays
+    // (never mutated in place) to keep reactivity simple.
 
     @wire(getSystems)
     wiredSystems({ data, error }) {
@@ -67,7 +71,7 @@ export default class IntegrationAdminApp extends LightningElement {
     @wire(getObjectConfigs)
     wiredConfigs({ data, error }) {
         if (data) {
-            // add rowId for stable key in template
+            // add rowId for stable key in template (no Id in DTO)
             this.objectConfigs = data.map((cfg, idx) => ({
                 ...cfg,
                 rowId: cfg.developerName || `obj-${idx}-${Date.now()}`
@@ -91,6 +95,7 @@ export default class IntegrationAdminApp extends LightningElement {
 
     // --- COMMON UTILS ---
 
+    // Small helper to normalize Apex/LDS error shapes into a string.
     extractError(error) {
         if (!error) return 'Unknown error';
         if (error.body && error.body.message) return error.body.message;
@@ -102,13 +107,15 @@ export default class IntegrationAdminApp extends LightningElement {
 
     handleTabChange(event) {
         this.activeTab = event.target.value;
-        this.errorMessage = null;
+        this.errorMessage = null; // clear old errors when switching context
     }
 
+    // Simple getters for conditional rendering per tab
     get showSystemsTab()  { return this.activeTab === 'systems'; }
     get showMappingsTab() { return this.activeTab === 'mappings'; }
     get showFieldsTab()   { return this.activeTab === 'fields'; }
 
+    // Button variants to highlight active tab
     get systemsTabVariant()  { return this.showSystemsTab ? 'brand' : 'neutral'; }
     get mappingsTabVariant() { return this.showMappingsTab ? 'brand' : 'neutral'; }
     get fieldsTabVariant()   { return this.showFieldsTab ? 'brand' : 'neutral'; }
@@ -129,6 +136,7 @@ export default class IntegrationAdminApp extends LightningElement {
 
         const rawValue = isBooleanInput ? event.target.checked : event.target.value;
 
+        // Immutable update: copy array, update row, reassign.
         const draft = [...this.systems];
         draft[idx][field] =
             field === 'maxRetries' && rawValue !== '' && rawValue !== null
@@ -169,6 +177,7 @@ export default class IntegrationAdminApp extends LightningElement {
     }
 
     addObjectConfig() {
+        // Choose first available values as defaults; admin can change later.
         const defaultSObject =
             this.sObjectOptions.length ? this.sObjectOptions[0].value : '';
         const defaultSystem =
@@ -191,6 +200,7 @@ export default class IntegrationAdminApp extends LightningElement {
         this.errorMessage = null;
 
         // Enforce uniqueness of (sObjectName + systemApiName) on the client side.
+        // Server-side logic also validates, but catching it here improves UX.
         const seenPairs = new Set();
         for (const cfg of this.objectConfigs) {
             if (!cfg.sObjectName || !cfg.systemApiName) {
@@ -208,7 +218,7 @@ export default class IntegrationAdminApp extends LightningElement {
 
         this.isLoading = true;
         try {
-            // Strip rowId before sending to Apex
+            // Strip rowId before sending to Apex (pure DTO shape)
             const payload = this.objectConfigs.map(cfg => ({
                 developerName: cfg.developerName,
                 sObjectName: cfg.sObjectName,
@@ -232,6 +242,7 @@ export default class IntegrationAdminApp extends LightningElement {
 
         const cfg = this.objectConfigs[idx];
 
+        // Set context for fields tab (Object + System pair)
         this.selectedSObjectName   = cfg.sObjectName;
         this.selectedSystemApiName = cfg.systemApiName;
         this.activeTab = 'fields';
@@ -239,6 +250,7 @@ export default class IntegrationAdminApp extends LightningElement {
         this.errorMessage = null;
 
         try {
+            // Load available source fields + existing mappings in parallel
             const [fields, mappings] = await Promise.all([
                 getAvailableFields({ sObjectName: cfg.sObjectName }),
                 getFieldMappings({
@@ -263,6 +275,7 @@ export default class IntegrationAdminApp extends LightningElement {
         }
     }
 
+    // Button state for "Add field" in Fields tab
     get isAddFieldDisabled() {
         return !this.selectedSObjectName || !this.selectedSystemApiName;
     }
@@ -321,6 +334,7 @@ export default class IntegrationAdminApp extends LightningElement {
 
         this.isLoading = true;
         try {
+            // Strip rowId and send pure DTO payload to Apex
             const payload = this.fieldMappings.map(fm => ({
                 developerName: fm.developerName,
                 sObjectName: fm.sObjectName,

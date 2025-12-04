@@ -1,4 +1,3 @@
-// DwhAdapter.cls
 // Case 2: First attempt TEMP FAIL, second (and later) attempts SUCCESS.
 // Uses ctx.attemptNumber to know which phase we are in.
 // Also logs the payload sent to DWH.

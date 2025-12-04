@@ -1,10 +1,10 @@
-// IntegrationJobWorker.cls
 // Purpose:
 //  - Execute integration jobs asynchronously (Queueable).
 //  - Bulk-safe processing of multiple jobs in a batch.
 //  - Enforce CRUD for Integration_Job__c and source records.
 //  - Use Integration_Field_Map_Config__c for payload mapping.
 //  - Implement retry logic based on Integration_System_Config__c.MaxRetries__c.
+//  - TBD - Partiall FLS / CRUD checks, need to complete for FLS on Integration_Job__c fields % source fields
 public with sharing class IntegrationJobWorker
     implements Queueable, Database.AllowsCallouts {
 

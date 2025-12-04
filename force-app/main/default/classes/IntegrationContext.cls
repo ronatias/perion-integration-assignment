@@ -1,4 +1,3 @@
-// IntegrationContext.cls
 // Purpose:
 //  - Provide adapters with:
 //      - Source record (SObject)

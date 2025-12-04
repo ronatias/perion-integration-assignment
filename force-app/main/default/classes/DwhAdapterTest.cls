@@ -3,20 +3,20 @@ private class DwhAdapterTest {
 
     @IsTest
     static void testSend_firstAttempt_tempFailure() {
-        // Arrange
+        // Arrange – simulate an initial delivery attempt where the adapter intentionally returns a retryable error
         DwhAdapter adapter = new DwhAdapter();
 
         IntegrationContext ctx = new IntegrationContext();
-        ctx.attemptNumber = 0; // first attempt
+        ctx.attemptNumber = 0; // First attempt → adapter should classify as temporary failure
         ctx.payload = new Map<String, Object>{
             'recordId' => '001XXXXXXXXXXXX',
             'event'    => 'UPDATE'
         };
 
-        // Act
+        // Act – execute adapter logic for first attempt
         IntegrationResult result = adapter.send(ctx);
 
-        // Assert
+        // Assert – ensure this attempt is recognized as a temporary DWH error
         System.assertNotEquals(null, result, 'Result should not be null');
         System.assertEquals(false, result.isSuccess,
             'First attempt should not be success'
@@ -34,20 +34,20 @@ private class DwhAdapterTest {
 
     @IsTest
     static void testSend_secondAttempt_success() {
-        // Arrange
+        // Arrange – simulate a subsequent retry where the adapter transitions to success
         DwhAdapter adapter = new DwhAdapter();
 
         IntegrationContext ctx = new IntegrationContext();
-        ctx.attemptNumber = 2; // second+ attempt
+        ctx.attemptNumber = 2; // Second+ attempt → adapter should return success
         ctx.payload = new Map<String, Object>{
             'recordId' => '001YYYYYYYYYYYY',
             'event'    => 'INSERT'
         };
 
-        // Act
+        // Act – run adapter logic after retry threshold
         IntegrationResult result = adapter.send(ctx);
 
-        // Assert
+        // Assert – validate successful classification on later attempts
         System.assertEquals(true, result.isSuccess,
             'Attempt > 0 should be success'
         );

@@ -1,4 +1,3 @@
-// IntegrationAdminDTOs.cls
 // Purpose:
 //  - Simple DTO containers used between LWC and Apex for the Integration Admin UI.
 //  - All fields are @AuraEnabled so LWC can send/receive them over the wire.

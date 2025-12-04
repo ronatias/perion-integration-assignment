@@ -1,14 +1,16 @@
 @IsTest
 private class GenericIntegrationServiceTest {
 
-    // Utility: create a basic Account to use as "business" record
+    // Utility: create a basic Account to use as "business" record.
+    // Keeps tests focused on integration behavior rather than object setup.
     private static Account createTestAccount() {
         Account a = new Account(Name = 'Test Account');
         insert a;
         return a;
     }
 
-    // Utility: create an active System Config
+    // Utility: create an active System Config.
+    // Represents a system that is allowed to receive integration jobs.
     private static Integration_System_Config__c createActiveSystem(String devName) {
         Integration_System_Config__c sys = new Integration_System_Config__c(
             DeveloperName__c  = devName,
@@ -20,7 +22,8 @@ private class GenericIntegrationServiceTest {
         return sys;
     }
 
-    // Utility: create an inactive System Config (for completeness)
+    // Utility: create an INACTIVE System Config.
+    // Used to verify that inactive systems are correctly ignored.
     private static Integration_System_Config__c createInactiveSystem(String devName) {
         Integration_System_Config__c sys = new Integration_System_Config__c(
             DeveloperName__c  = devName,
@@ -32,7 +35,8 @@ private class GenericIntegrationServiceTest {
         return sys;
     }
 
-    // Utility: create an Object Rule
+    // Utility: create an Object Rule.
+    // This links an sObject + TriggerReason to a target system.
     private static Integration_Object_Rule__c createRule(
         String sObjectName,
         String systemDevName,
@@ -54,6 +58,7 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_singleJobCreated() {
+        // Arrange – minimal configuration for a single integration job
         Account acc = createTestAccount();
 
         String systemDevName = 'PERION_API';
@@ -66,12 +71,14 @@ private class GenericIntegrationServiceTest {
         input.recordId      = acc.Id;
         input.triggerReason = 'AFTER_INSERT';
 
+        // Act – invoke the invocable method via a single input
         Test.startTest();
         GenericIntegrationService.process(
             new List<GenericIntegrationService.IntegrationRequestInput>{ input }
         );
         Test.stopTest(); // will also run IntegrationJobWorker
 
+        // Assert – exactly one job should be persisted for this configuration
         List<Integration_Job__c> jobs = [
             SELECT Id, SObjectName__c, RecordId__c, SystemApiName__c, TriggerReason__c, Status__c, RetryCount__c
             FROM Integration_Job__c
@@ -91,6 +98,7 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_multipleSystemsCreatesMultipleJobs() {
+        // Arrange – same business event, but configured to fan out to two systems
         Account acc = createTestAccount();
 
         String systemA = 'SYS_A';
@@ -108,12 +116,14 @@ private class GenericIntegrationServiceTest {
         input.recordId      = acc.Id;
         input.triggerReason = 'AFTER_UPDATE';
 
+        // Act – single input should generate jobs for both systems
         Test.startTest();
         GenericIntegrationService.process(
             new List<GenericIntegrationService.IntegrationRequestInput>{ input }
         );
         Test.stopTest();
 
+        // Assert – one job per active system
         List<Integration_Job__c> jobs = [
             SELECT SystemApiName__c
             FROM Integration_Job__c
@@ -132,9 +142,9 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_noRulesNoJobs() {
+        // Arrange – system & rule exist, but triggerReason does not match input
         Account acc = createTestAccount();
 
-        // System + rule use a different triggerReason than the input
         String systemDevName = 'PERION_API';
         createActiveSystem(systemDevName);
         createRule('Account', systemDevName, 'AFTER_INSERT', true);
@@ -145,12 +155,14 @@ private class GenericIntegrationServiceTest {
         input.recordId      = acc.Id;
         input.triggerReason = 'AFTER_UPDATE'; // does NOT match rule
 
+        // Act – invoke with a triggerReason that has no active rule
         Test.startTest();
         GenericIntegrationService.process(
             new List<GenericIntegrationService.IntegrationRequestInput>{ input }
         );
         Test.stopTest();
 
+        // Assert – engine should exit gracefully without creating any jobs
         System.assertEquals(
             0,
             [SELECT COUNT() FROM Integration_Job__c],
@@ -163,10 +175,9 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_rulesButNoActiveSystems() {
+        // Arrange – rule is active, but referenced system is inactive at system level
         Account acc = createTestAccount();
 
-        // Create rule that references a system dev name
-        // but the actual system config is INACTIVE
         String systemDevName = 'INACTIVE_SYS';
         createInactiveSystem(systemDevName);
         createRule('Account', systemDevName, 'AFTER_INSERT', true);
@@ -177,12 +188,14 @@ private class GenericIntegrationServiceTest {
         input.recordId      = acc.Id;
         input.triggerReason = 'AFTER_INSERT';
 
+        // Act – processing should respect system-level IsActive__c = false
         Test.startTest();
         GenericIntegrationService.process(
             new List<GenericIntegrationService.IntegrationRequestInput>{ input }
         );
         Test.stopTest();
 
+        // Assert – no jobs when all target systems are inactive
         System.assertEquals(
             0,
             [SELECT COUNT() FROM Integration_Job__c],
@@ -195,6 +208,7 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_skipsInvalidInputs() {
+        // Arrange – one valid input and several malformed ones
         Account acc = createTestAccount();
 
         String systemDevName = 'PERION_API';
@@ -237,11 +251,12 @@ private class GenericIntegrationServiceTest {
                 missingTrigger
             };
 
+        // Act – engine should robustly ignore invalid entries
         Test.startTest();
         GenericIntegrationService.process(inputs);
         Test.stopTest();
 
-        // Only the valid input should produce a job
+        // Assert – only the single valid input should produce a job
         System.assertEquals(
             1,
             [SELECT COUNT() FROM Integration_Job__c],
@@ -254,6 +269,7 @@ private class GenericIntegrationServiceTest {
     // -----------------------------
     @IsTest
     static void testProcess_nullAndEmptyInputs() {
+        // Act – call the invocable with null and with an empty list
         Test.startTest();
         // Both calls happen within a single start/stop block
         GenericIntegrationService.process(null);
@@ -262,6 +278,7 @@ private class GenericIntegrationServiceTest {
         );
         Test.stopTest();
 
+        // Assert – framework should be no-op and not create any jobs
         System.assertEquals(
             0,
             [SELECT COUNT() FROM Integration_Job__c],

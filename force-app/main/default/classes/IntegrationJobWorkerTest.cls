@@ -5,6 +5,8 @@ private class IntegrationJobWorkerTest {
     // Test data helpers
     // -----------------------
 
+    // Helper: create an Account with or without Phone, so we can test
+    // required-field behavior in the payload mapping.
     private static Account createTestAccount(Boolean setPhone) {
         Account a = new Account(
             Name = 'Test Account' + (setPhone ? ' With Phone' : ' No Phone')
@@ -16,6 +18,8 @@ private class IntegrationJobWorkerTest {
         return a;
     }
 
+    // Helper: create a System Config record with a given dev name and active flag.
+    // Used to simulate active vs inactive external systems.
     private static Integration_System_Config__c createSystemConfig(
         String devName,
         Boolean isActive
@@ -30,6 +34,8 @@ private class IntegrationJobWorkerTest {
         return sys;
     }
 
+    // Helper: create an Object Rule for a given SObject + System + TriggerReason.
+    // Used to simulate matching / missing runtime configuration.
     private static Integration_Object_Rule__c createObjectRule(
         String sObjectName,
         String systemDevName,
@@ -46,6 +52,8 @@ private class IntegrationJobWorkerTest {
         return rule;
     }
 
+    // Helper: create a Field Mapping row for a single source field.
+    // Used to test both happy-path mapping and error paths (required / invalid fields).
     private static Integration_Field_Map_Config__c createFieldMap(
         String sObjectName,
         String systemDevName,
@@ -65,6 +73,8 @@ private class IntegrationJobWorkerTest {
         return fm;
     }
 
+    // Helper: create a pending Integration_Job__c pointing to a record and system.
+    // All tests use this to drive IntegrationJobWorker logic.
     private static Integration_Job__c createJob(
         String sObjectName,
         Id recordId,
@@ -89,13 +99,14 @@ private class IntegrationJobWorkerTest {
     @IsTest
     static void testExecute_nullOrEmptyJobIds() {
         Test.startTest();
-        // Null list
+        // Null list – should simply return and not throw
         new IntegrationJobWorker(null).execute(null);
-        // Empty list
+        // Empty list – same behavior, early exit with no effect
         new IntegrationJobWorker(new List<Id>()).execute(null);
         Test.stopTest();
 
-        // No exception and no updates is the success criteria here
+        // No exception and no Integration_Job__c records created/updated
+        // is the success criteria here.
         System.assertEquals(0, [SELECT COUNT() FROM Integration_Job__c]);
     }
 
@@ -104,13 +115,14 @@ private class IntegrationJobWorkerTest {
     // -----------------------
     @IsTest
     static void testExecute_systemInactive() {
+        // Create a valid business record
         Account acc = createTestAccount(true);
 
-        // System exists but inactive
+        // System exists but is marked inactive
         String systemName = 'SYS_INACTIVE';
         createSystemConfig(systemName, false);
 
-        // No need for rules / field maps – will fail at system check
+        // No need for rules / field maps – worker should fail at system check
         Integration_Job__c job = createJob(
             'Account',
             acc.Id,
@@ -122,6 +134,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // Expect job to be marked as a permanent failure because the system is inactive
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -136,6 +149,7 @@ private class IntegrationJobWorkerTest {
     // -----------------------
     @IsTest
     static void testExecute_objectConfigNotFound() {
+        // Valid source record
         Account acc = createTestAccount(true);
 
         String systemName = 'SYS_NO_RULE';
@@ -153,6 +167,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // Expect permanent failure because the runtime object rule key cannot be resolved
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -175,10 +190,10 @@ private class IntegrationJobWorkerTest {
         createSystemConfig(systemName, true);
         createObjectRule(fakeSObject, systemName, 'AFTER_INSERT', true);
 
-        // Job points to fake SObject name
+        // Job points to fake SObject name – loadAndSecureRecords will not return any records
         Integration_Job__c job = createJob(
             fakeSObject,
-            null, // RecordId__c will be null string, but loadAndSecureRecords already won't load anything
+            null, // RecordId__c will be null string, but the type itself is invalid
             systemName,
             'AFTER_INSERT'
         );
@@ -187,6 +202,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // Expect "No records loaded for ..." because no SObjectType.describe() was resolvable
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -205,6 +221,7 @@ private class IntegrationJobWorkerTest {
     // -----------------------
     @IsTest
     static void testExecute_recordNotFound() {
+        // Create a valid Account, but we will lie about the SObject type in the job
         Account acc = createTestAccount(true);
 
         String systemName = 'SYS_RECORD_NOT_FOUND';
@@ -223,6 +240,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // The Contact query finds nothing → "Record not found"
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -255,6 +273,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // Worker should stop at "No field mappings found" for this SObject + System
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -291,6 +310,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // buildPayloadFromFieldMaps should mark the job as permanent failure due to missing required field
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c
@@ -314,7 +334,7 @@ private class IntegrationJobWorkerTest {
         createSystemConfig(systemName, true);
         createObjectRule('Account', systemName, 'AFTER_INSERT', true);
 
-        // Mapping points to a non-existing field → record.get() throws
+        // Mapping points to a non-existing field → record.get() throws and is caught
         createFieldMap('Account', systemName, 'DoesNotExist__c', 'badField', false);
 
         Integration_Job__c job = createJob(
@@ -328,6 +348,7 @@ private class IntegrationJobWorkerTest {
         new IntegrationJobWorker(new List<Id>{ job.Id }).execute(null);
         Test.stopTest();
 
+        // Expect "Error reading field ..." with the invalid field name
         Integration_Job__c updated = [
             SELECT Status__c, LastError__c
             FROM Integration_Job__c

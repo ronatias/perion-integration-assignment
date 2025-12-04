@@ -1,4 +1,3 @@
-// DocAdapter.cls
 // Case 3: First attempt TEMP FAIL, second+ attempts PERMANENT FAIL.
 // This demonstrates that after a retry, we can classify it as permanent.
 // Also logs the payload structure.
