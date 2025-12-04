@@ -38,7 +38,8 @@ public with sharing class IntegrationAdminDTOs {
     // ----------------- FIELD OPTION DTO -----------------
     // Used for combobox options (both fields & objects)
     public class FieldOptionDTO {
-        @AuraEnabled public String apiName; // e.g. 'Amount'
-        @AuraEnabled public String label;   // e.g. 'Amount'
+        @AuraEnabled public String apiName;  // e.g. 'Amount'
+        @AuraEnabled public String label;    // e.g. 'Amount'
+        @AuraEnabled public String dataType; // e.g. 'String', 'Number', 'Date', ... (optional for objects)
     }
 }

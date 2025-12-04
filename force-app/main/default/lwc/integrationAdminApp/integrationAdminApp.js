@@ -259,13 +259,23 @@ export default class IntegrationAdminApp extends LightningElement {
                 })
             ]);
 
+            // Keep datatype from Apex (Describe) in the option
             this.availableFields = fields.map(f => ({
                 label: `${f.label} (${f.apiName})`,
-                value: f.apiName
+                value: f.apiName,
+                dataType: f.dataType
             }));
 
+            // Build lookup from field API → data type
+            const dataTypeByApi = {};
+            this.availableFields.forEach(opt => {
+                dataTypeByApi[opt.value] = opt.dataType;
+            });
+
+            // For existing mappings, prefer described dataType over stored value
             this.fieldMappings = (mappings || []).map((fm, index) => ({
                 ...fm,
+                dataType: dataTypeByApi[fm.sourceFieldAPI] || fm.dataType || '',
                 rowId: fm.developerName || `fm-${index}-${Date.now()}`
             }));
         } catch (e) {
@@ -290,7 +300,7 @@ export default class IntegrationAdminApp extends LightningElement {
             sourceFieldAPI: '',
             targetFieldName: '',
             isRequired: false,
-            dataType: 'String',
+            dataType: '', // will be derived when sourceFieldAPI is selected
             rowId: `fm-new-${Date.now()}-${this.fieldMappings.length}`
         };
 
@@ -307,7 +317,19 @@ export default class IntegrationAdminApp extends LightningElement {
             : event.target.value;
 
         const draft = [...this.fieldMappings];
-        draft[idx][field] = value;
+
+        if (field === 'sourceFieldAPI') {
+            // Update selected source field
+            draft[idx][field] = value;
+
+            // Derive data type from availableFields
+            const match = this.availableFields.find(opt => opt.value === value);
+            draft[idx].dataType = match ? match.dataType : '';
+        } else {
+            // All other fields behave exactly as before
+            draft[idx][field] = value;
+        }
+
         this.fieldMappings = draft;
     }
 

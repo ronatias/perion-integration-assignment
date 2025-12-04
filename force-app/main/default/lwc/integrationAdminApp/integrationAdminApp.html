@@ -289,16 +289,9 @@
                                     </lightning-input>
                                 </td>
 
-                                <!-- Data Type (text input) -->
+                                <!-- Data Type (derived from Source Field, read-only) -->
                                 <td class="datatype-cell">
-                                    <lightning-input
-                                        type="text"
-                                        variant="label-hidden"
-                                        data-index={index}
-                                        data-field="dataType"
-                                        value={fm.dataType}
-                                        onchange={handleFieldMappingChange}>
-                                    </lightning-input>
+                                    <lightning-formatted-text value={fm.dataType}></lightning-formatted-text>
                                 </td>
 
                             </tr>

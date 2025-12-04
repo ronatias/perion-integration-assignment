@@ -509,8 +509,10 @@ public with sharing class IntegrationAdminController {
             Schema.DescribeFieldResult fd = fields.get(api).getDescribe();
             IntegrationAdminDTOs.FieldOptionDTO f =
                 new IntegrationAdminDTOs.FieldOptionDTO();
-            f.apiName = api;
-            f.label   = fd.getLabel();
+            f.apiName  = api;
+            f.label    = fd.getLabel();
+            // NEW: expose the underlying field display type as a simple string
+            f.dataType = String.valueOf(fd.getType()); // e.g. 'String', 'Double', 'Date'
             result.add(f);
         }
 
